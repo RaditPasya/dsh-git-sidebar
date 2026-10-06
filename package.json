@@ -42,6 +42,14 @@
     }
   },
   "license": "MIT",
+  "files": [
+    "lib/",
+    "src",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.4"
   },
