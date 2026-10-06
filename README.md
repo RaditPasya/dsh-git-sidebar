@@ -7,7 +7,7 @@
 **A VS Code-style Source Control panel for DeepSeek Harness.**
 Branches, graph, previews, and push-state — one click from the left rail. No telemetry. No cloud. Just git.
 
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square)](https://github.com/RaditPasya/dsh-git-sidebar)
 [![Platform](https://img.shields.io/badge/platform-web-333?style=flat-square)](https://github.com/RaditPasya/dsh-git-sidebar)
 
@@ -48,16 +48,6 @@ Restart the web UI once (new host routes), refresh — the **Git icon** appears 
 > dsh plugin --profile web add link:$(pwd)/dsh-git-sidebar
 > ```
 
-## Tour
-
-<!-- TODO: record a 30s GIF of switching branches from the footer popup and drop it here as docs/tour.gif -->
-![Quick tour](docs/tour.gif)
-
-1. **Glance** — footer pill shows your session's branch (`●` = dirty).
-2. **Pop** — click it: branches + last 30 commits float over the sidebar. `Esc` or click-away dismisses.
-3. **Dive** — *Open full panel* for the 200-commit graph, search, and branch creation.
-4. **Switch** — click any branch; guards stop you before conflicts or worktree clashes do.
-
 ## Dev loop
 
 ```sh
@@ -77,8 +67,8 @@ src/
     └── sidebar/     icon · panel · popup · footer · shared kit
 ```
 
+![Quick tour](docs/tour.gif)
+
 ## License
 
-Apache-2.0. Git plumbing was originally derived from an Apache-2.0 third-party
-plugin and has since been rewritten and restructured; no upstream branding,
-telemetry, or sync relationship remains.
+MIT.
