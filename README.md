@@ -71,4 +71,9 @@ src/
 
 ## License
 
-MIT.
+MIT — the industry-standard permissive license. You are free to use this
+software commercially, modify it, distribute it, sublicense it, and sell
+copies of it. The only requirements: keep the copyright notice and this
+permission notice in all copies. The software is provided "as is", without
+warranty of any kind, and the authors are not liable for any claims or
+damages. See [LICENSE](LICENSE) for the full text.
