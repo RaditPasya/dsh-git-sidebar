@@ -171,7 +171,7 @@ export function GitSidebarPopup(props: GitSidebarPopupProps) {
       aria-label={t('popup.title')}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: `1px solid ${token.border}` }}>
-        <strong style={{ flex: 1, minWidth: 0, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={firstPath}>{followedName !== '' ? followedName : t('popup.title')}</strong>
+        <strong style={{ flex: 1, minWidth: 0, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={firstPath}>{followedName !== '' ? followedName.split('/').filter(Boolean).pop() ?? followedName : t('popup.title')}</strong>
         {status !== undefined && status !== null && status.branch !== '' && (
           <span style={{ fontSize: 12, color: token.brand, fontWeight: 700 }}>{status.branch}</span>
         )}
