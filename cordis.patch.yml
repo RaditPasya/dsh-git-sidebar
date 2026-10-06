@@ -1,0 +1,6 @@
+# dsh-git-sidebar bundle patch: mounts the standalone left-rail Git panel
+# (host half: workspace-gated git service + /git-fork/* routes; browser half:
+# sidebar icon + main panel + footer entry + popup).
+- insert:
+    - id: ui-git-sidebar
+      name: 'dsh-git-sidebar'
