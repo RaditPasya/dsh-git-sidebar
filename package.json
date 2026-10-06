@@ -1,6 +1,6 @@
 {
-  "name": "dsh-git-sidebar",
-  "description": "VS Code-style left-rail Git panel for DeepSeek Harness: branch switcher with ahead/behind tracking, commit graph with per-commit file preview, and a session-following footer entry.",
+  "name": "dsh-web-git-sidebar",
+  "description": "DSH Web Git Sidebar: VS Code-style left-rail Git panel for DeepSeek Harness with branch switching, commit graph, per-commit previews and a session-following footer entry.",
   "version": "0.1.0",
   "icon": "icon.svg",
   "type": "module",
@@ -92,6 +92,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/RaditPasya/dsh-git-sidebar.git"
+    "url": "git+https://github.com/RaditPasya/dsh-web-git-sidebar.git"
   }
 }

@@ -19,13 +19,13 @@ export type { GitSidebarKey } from './sidebar/locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    'git-sidebar': GitSidebarKey
+    'dsh-web-git-sidebar': GitSidebarKey
   }
 }
 
-const PANEL_NS = 'git-sidebar'
+const PANEL_NS = 'dsh-web-git-sidebar'
 
-const PANEL_ID = 'git-sidebar' as MainPanelId
+const PANEL_ID = 'dsh-web-git-sidebar' as MainPanelId
 
 export const inject = ['slots', 'layout', 'locale']
 
@@ -36,7 +36,7 @@ export function apply(ctx: ClientContext): void {
     } catch {
       return () => {}
     }
-  }, 'dsh-git-sidebar: panel dictionaries')
+  }, 'dsh-web-git-sidebar: panel dictionaries')
 
   const panelT = ctx.locale.bind(PANEL_NS)
 
@@ -52,7 +52,7 @@ export function apply(ctx: ClientContext): void {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       try {
-        console.error(`[git-sidebar] openFullPanel failed: ${message}`)
+        console.error(`[dsh-web-git-sidebar] openFullPanel failed: ${message}`)
       } catch {
       }
       setFooterNavError(message)
@@ -90,7 +90,7 @@ export function apply(ctx: ClientContext): void {
       return ctx.slots.register(
         {
           name: 'sidebar.footer.action',
-          id: 'git-sidebar.footer',
+          id: 'dsh-web-git-sidebar.footer',
           locale: PANEL_NS,
           inject: () => ({
             openGit: () => {
@@ -109,7 +109,7 @@ export function apply(ctx: ClientContext): void {
       return ctx.slots.register(
         {
           name: 'shell.overlay',
-          id: 'git-sidebar.footer-popup',
+          id: 'dsh-web-git-sidebar.footer-popup',
           locale: PANEL_NS,
           inject: () => ({
             openFullPanel,

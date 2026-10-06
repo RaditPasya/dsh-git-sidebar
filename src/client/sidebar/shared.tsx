@@ -30,14 +30,14 @@ export function laneColor(index: number): string {
   return LANE_COLORS[index % LANE_COLORS.length] ?? '#9aa0a6'
 }
 
-const STYLE_ID = 'dsh-git-sidebar-motion'
+const STYLE_ID = 'dsh-web-git-sidebar-motion'
 
 export function ensureSidebarStyles(): void {
   if (typeof document === 'undefined') return
   if (document.getElementById(STYLE_ID) !== null) return
   const tag = document.createElement('style')
   tag.id = STYLE_ID
-  tag.dataset.plugin = 'git-sidebar'
+  tag.dataset.plugin = 'dsh-web-git-sidebar'
   tag.textContent = `
 .gs-popup-enter { animation: gs-rise 180ms cubic-bezier(0.2, 0, 0.2, 1) both; }
 .gs-popup-exit { animation: gs-sink 150ms ease-in both; }

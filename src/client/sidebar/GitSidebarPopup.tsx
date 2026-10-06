@@ -134,7 +134,7 @@ export function GitSidebarPopup(props: GitSidebarPopupProps) {
   return (
     <>
       <div
-        data-dsh-plugin="git-sidebar"
+        data-dsh-plugin="dsh-web-git-sidebar"
         data-dsh-part="footer-popup-backdrop"
         onClick={() => { closeFooterPopup() }}
         aria-hidden="true"
@@ -147,7 +147,7 @@ export function GitSidebarPopup(props: GitSidebarPopupProps) {
         }}
       />
     <div
-      data-dsh-plugin="git-sidebar"
+      data-dsh-plugin="dsh-web-git-sidebar"
       data-dsh-part="footer-popup"
       className={leaving ? 'gs-popup-exit' : 'gs-popup-enter'}
       style={{

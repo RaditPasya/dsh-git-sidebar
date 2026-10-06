@@ -38,7 +38,7 @@ function createWorkspaceGate(ctx: Context): WorkspaceGate {
   }
 }
 
-export const apply = mountOnce('dsh-git-sidebar', applyImpl)
+export const apply = mountOnce('dsh-web-git-sidebar', applyImpl)
 
 function applyImpl(ctx: Context, config?: Config): void {
   const service = new GitService(subprocessRunner(ctx), createWorkspaceGate(ctx))
@@ -57,7 +57,7 @@ function applyImpl(ctx: Context, config?: Config): void {
     const want = effectiveConfig(config).agentTool
     if (want && toolFiber === undefined) {
       toolFiber = ctx.inject(['tools'], (toolCtx: Context) => {
-        toolCtx.effect(() => toolCtx.tools.register(buildWorktreeTool(ctx, service)), 'dsh-git-sidebar: git_worktree tool')
+        toolCtx.effect(() => toolCtx.tools.register(buildWorktreeTool(ctx, service)), 'dsh-web-git-sidebar: git_worktree tool')
       })
     } else if (!want && toolFiber !== undefined) {
       toolFiber.dispose()
@@ -70,7 +70,7 @@ function applyImpl(ctx: Context, config?: Config): void {
       if (paths.some(path => path[0] === 'agentTool')) syncTool()
     })
     return () => { dispose() }
-  }, 'dsh-git-sidebar: settings-committed tool sync')
+  }, 'dsh-web-git-sidebar: settings-committed tool sync')
 
   ctx.effect(() => {
     syncTool()
@@ -80,5 +80,5 @@ function applyImpl(ctx: Context, config?: Config): void {
       toolFiber?.dispose()
       toolFiber = undefined
     }
-  }, 'dsh-git-sidebar: /git routes + tool')
+  }, 'dsh-web-git-sidebar: /git routes + tool')
 }

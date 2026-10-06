@@ -1,7 +1,7 @@
 
-const MOUNTED = Symbol.for('dsh-git-sidebar.mounted-plugins')
+const MOUNTED = Symbol.for('dsh-web-git-sidebar.mounted-plugins')
 
-const WAITERS = Symbol.for('dsh-git-sidebar.mounted-plugins.waiters')
+const WAITERS = Symbol.for('dsh-web-git-sidebar.mounted-plugins.waiters')
 
 interface MountContext {
   effect?: (effect: () => unknown) => unknown

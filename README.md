@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🌿 dsh-git-sidebar
+# 🌿 DSH Web Git Sidebar
 
 ### Git, where your eyes already are.
 
-**A VS Code-style Source Control panel for DeepSeek Harness.**
+**A VS Code-style Source Control panel for DeepSeek Harness, living in the left rail.**
 Branches, graph, previews, and push-state — one click from the left rail. No telemetry. No cloud. Just git.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
@@ -37,7 +37,7 @@ Branches, graph, previews, and push-state — one click from the left rail. No t
 ## Install
 
 ```sh
-dsh plugin --profile web add github:RaditPasya/dsh-git-sidebar
+dsh plugin --profile web add dsh-web-git-sidebar
 ```
 
 Restart the web UI once (new host routes), refresh — the **Git icon** appears in the left rail.

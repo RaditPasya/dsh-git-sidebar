@@ -1,5 +1,5 @@
 /**
- * Minimal build for dsh-git-sidebar.
+ * Minimal build for dsh-web-git-sidebar.
  * - host: esbuild src/index.ts -> lib/index.js (node ESM, externals kept)
  * - client: esbuild src/client/index.ts -> lib/client.js wrapped in
  *   window.__ModuleLoader__.load({ id, factory }) so the DSH web shell
@@ -8,7 +8,7 @@
 import { build } from 'esbuild'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 
-const PKG_ID = 'dsh-git-sidebar'
+const PKG_ID = 'dsh-web-git-sidebar'
 
 await mkdir('lib', { recursive: true })
 

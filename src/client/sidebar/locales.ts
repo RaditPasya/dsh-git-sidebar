@@ -1,13 +1,13 @@
 
 export const sidebarZh = {
-  'panel': 'Git',
-  'panel.title': 'Git',
+  'panel': 'Git Sidebar',
+  'panel.title': 'Git Sidebar',
   'panel.subtitle': '左侧栏 · 切换分支 · 预览提交 · 本地未推送',
   'panel.workspace': '工作区',
   'panel.branches': '分支',
   'panel.searchBranches': '搜索分支',
   'panel.noBranches': '没有匹配分支',
-  'panel.newBranchPlaceholder': '例如 feature/git-sidebar',
+  'panel.newBranchPlaceholder': '例如 feature/dsh-web-git-sidebar',
   'panel.create': '创建并切换',
   'panel.detached': '分离 HEAD',
   'panel.dirty': '{count} 个未提交更改',
@@ -38,14 +38,14 @@ export const sidebarZh = {
 export type GitSidebarKey = keyof typeof sidebarZh
 
 export const sidebarEn: Record<GitSidebarKey, string> = {
-  'panel': 'Git',
-  'panel.title': 'Git',
+  'panel': 'Git Sidebar',
+  'panel.title': 'Git Sidebar',
   'panel.subtitle': 'Left rail · switch branches · preview commits · local-only',
   'panel.workspace': 'Workspace',
   'panel.branches': 'Branches',
   'panel.searchBranches': 'Search branches',
   'panel.noBranches': 'No matching branches',
-  'panel.newBranchPlaceholder': 'For example, feature/git-sidebar',
+  'panel.newBranchPlaceholder': 'For example, feature/dsh-web-git-sidebar',
   'panel.create': 'Create and switch',
   'panel.detached': 'Detached HEAD',
   'panel.dirty': '{count} uncommitted changes',

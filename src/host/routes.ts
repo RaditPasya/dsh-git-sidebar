@@ -118,7 +118,7 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
         push(subscriber, { path: subscriber.path, status })
       } catch (error: unknown) {
         if (subscribers.has(subscriber)) {
-          ctx.logger.warn(`dsh-git-sidebar: status poll failed for ${subscriber.path}: ${String(error)}`)
+          ctx.logger.warn(`dsh-web-git-sidebar: status poll failed for ${subscriber.path}: ${String(error)}`)
         }
       } finally {
         if (subscriber.statusAbort === controller) subscriber.statusAbort = undefined
@@ -144,7 +144,7 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
     }
     const pathname = new URL(req.url ?? '/', 'http://x').pathname
     const payload = await readJsonBody(req, { maxBytes: 1024 * 1024 })
-    if (pathname === '/git-fork/config') {
+    if (pathname === '/git-sidebar/config') {
       const view = config()
       writeJson(res, 200, isGitFeatureConfig(view) ? OK(view) : FAIL(MALFORMED_VIEW))
       return
@@ -155,18 +155,18 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
       return
     }
     switch (pathname) {
-      case '/git-fork/status':
+      case '/git-sidebar/status':
         try {
           okView(res, await statusWithDeadline(path), isRepoStatus)
         } catch (error: unknown) {
-          ctx.logger.warn(`dsh-git-sidebar: status request failed for ${path}: ${String(error)}`)
+          ctx.logger.warn(`dsh-web-git-sidebar: status request failed for ${path}: ${String(error)}`)
           writeJson(res, 200, FAIL({ code: 'internal', message: STATUS_TIMEOUT_MESSAGE }))
         }
         return
-      case '/git-fork/branches':
+      case '/git-sidebar/branches':
         okView(res, await service.branches(path), isBranchesView)
         return
-      case '/git-fork/graph': {
+      case '/git-sidebar/graph': {
         const rawLimit = typeof payload === 'object' && payload !== null
           ? (payload as Record<string, unknown>).limit
           : undefined
@@ -174,7 +174,7 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
         okView(res, await service.graph(path, limit), isGraphView)
         return
       }
-      case '/git-fork/panel': {
+      case '/git-sidebar/panel': {
         const rawLimit = typeof payload === 'object' && payload !== null
           ? (payload as Record<string, unknown>).limit
           : undefined
@@ -182,12 +182,12 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
         try {
           okView(res, await service.panel(path, limit), isPanelView)
         } catch (error: unknown) {
-          ctx.logger.warn(`dsh-git-sidebar: panel request failed for ${path}: ${String(error)}`)
+          ctx.logger.warn(`dsh-web-git-sidebar: panel request failed for ${path}: ${String(error)}`)
           writeJson(res, 200, FAIL({ code: 'internal', message: 'git panel request failed' }))
         }
         return
       }
-      case '/git-fork/switch': {
+      case '/git-sidebar/switch': {
         const branch = typeof payload === 'object' && payload !== null
           ? (payload as Record<string, unknown>).branch
           : undefined
@@ -199,7 +199,7 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
         writeJson(res, 200, result.ok ? OK({ branch: result.branch }) : FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW))
         return
       }
-      case '/git-fork/create-branch': {
+      case '/git-sidebar/create-branch': {
         const name = typeof payload === 'object' && payload !== null
           ? (payload as Record<string, unknown>).name
           : undefined
@@ -211,10 +211,10 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
         writeJson(res, 200, result.ok ? OK({ branch: result.branch }) : FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW))
         return
       }
-      case '/git-fork/worktrees':
+      case '/git-sidebar/worktrees':
         okView(res, await service.worktrees(path), isWorktreeListView)
         return
-      case '/git-fork/worktree-add': {
+      case '/git-sidebar/worktree-add': {
         const record = typeof payload === 'object' && payload !== null
           ? payload as Record<string, unknown>
           : {}
@@ -229,7 +229,7 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
         writeJson(res, 200, result.ok ? OK({ path: result.path, branch: result.branch, name: result.name }) : FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW))
         return
       }
-      case '/git-fork/worktree-remove': {
+      case '/git-sidebar/worktree-remove': {
         const record = typeof payload === 'object' && payload !== null
           ? payload as Record<string, unknown>
           : {}
@@ -245,7 +245,7 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
         writeJson(res, 200, result.ok ? OK({ removed: true }) : FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW))
         return
       }
-      case '/git-fork/commit': {
+      case '/git-sidebar/commit': {
         const record = typeof payload === 'object' && payload !== null
           ? payload as Record<string, unknown>
           : {}
@@ -302,8 +302,8 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
   }
 
   const disposers = [
-    ctx.webServer.register({ kind: 'prefix', path: '/git-fork', handler }),
-    ctx.webServer.register({ kind: 'exact', path: '/git-fork/events', handler: sse }),
+    ctx.webServer.register({ kind: 'prefix', path: '/git-sidebar', handler }),
+    ctx.webServer.register({ kind: 'exact', path: '/git-sidebar/events', handler: sse }),
   ]
   return () => {
     for (const dispose of disposers) dispose()

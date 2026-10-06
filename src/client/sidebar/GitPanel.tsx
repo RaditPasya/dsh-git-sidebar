@@ -107,7 +107,7 @@ export function GitPanel(props: GitPanelProps) {
   }, [path, selectedOid])
 
   return (
-    <div style={styles.page} data-dsh-plugin="git-sidebar" data-dsh-part="panel">
+    <div style={styles.page} data-dsh-plugin="dsh-web-git-sidebar" data-dsh-part="panel">
       <div style={styles.header}>
         <div>
           <div style={styles.title}>{t('panel.title')}</div>

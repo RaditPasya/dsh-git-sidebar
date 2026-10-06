@@ -34,50 +34,50 @@ async function post<T>(path: string, payload: Record<string, unknown>): Promise<
 
 export class GitApi {
   status(path: string): Promise<ApiResult<RepoStatus | null>> {
-    return post('git-fork/status', { path })
+    return post('git-sidebar/status', { path })
   }
 
   branches(path: string): Promise<ApiResult<BranchesView | null>> {
-    return post('git-fork/branches', { path })
+    return post('git-sidebar/branches', { path })
   }
 
   switchBranch(path: string, branch: string): Promise<ApiResult<{ branch: string }>> {
-    return post('git-fork/switch', { path, branch })
+    return post('git-sidebar/switch', { path, branch })
   }
 
   createBranch(path: string, name: string): Promise<ApiResult<{ branch: string }>> {
-    return post('git-fork/create-branch', { path, name })
+    return post('git-sidebar/create-branch', { path, name })
   }
 
   graph(path: string, limit?: number): Promise<ApiResult<GraphView | null>> {
-    return post('git-fork/graph', limit === undefined ? { path } : { path, limit })
+    return post('git-sidebar/graph', limit === undefined ? { path } : { path, limit })
   }
 
   panel(path: string, limit?: number): Promise<ApiResult<PanelView | null>> {
-    return post('git-fork/panel', limit === undefined ? { path } : { path, limit })
+    return post('git-sidebar/panel', limit === undefined ? { path } : { path, limit })
   }
 
   commit(path: string, oid: string): Promise<ApiResult<CommitDetail | null>> {
-    return post('git-fork/commit', { path, oid })
+    return post('git-sidebar/commit', { path, oid })
   }
 
   worktrees(path: string): Promise<ApiResult<WorktreeListView | null>> {
-    return post('git-fork/worktrees', { path })
+    return post('git-sidebar/worktrees', { path })
   }
 
   addWorktree(path: string, name: string, baseRef?: string): Promise<ApiResult<{ path: string; branch: string; name: string }>> {
-    return post('git-fork/worktree-add', baseRef === undefined ? { path, name } : { path, name, baseRef })
+    return post('git-sidebar/worktree-add', baseRef === undefined ? { path, name } : { path, name, baseRef })
   }
 
   removeWorktree(path: string, worktreePath: string, opts?: { force?: boolean; deleteBranch?: boolean }): Promise<ApiResult<{ removed: true }>> {
-    return post('git-fork/worktree-remove', { path, worktreePath, force: opts?.force === true, deleteBranch: opts?.deleteBranch === true })
+    return post('git-sidebar/worktree-remove', { path, worktreePath, force: opts?.force === true, deleteBranch: opts?.deleteBranch === true })
   }
 
   config(): Promise<ApiResult<GitFeatureConfig>> {
-    return post('git-fork/config', {})
+    return post('git-sidebar/config', {})
   }
 }
 
 export function subscribeChanges(path: string, onChange: () => void): () => void {
-  return subscribeSharedEvents(`git-fork/events?path=${encodeURIComponent(path)}`, 'change', () => { onChange() })
+  return subscribeSharedEvents(`git-sidebar/events?path=${encodeURIComponent(path)}`, 'change', () => { onChange() })
 }
