@@ -11,8 +11,7 @@ import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import { GitPanel } from './sidebar/GitPanel.tsx'
 import { GitPanelIcon } from './sidebar/GitPanelIcon.tsx'
 import { GitFooterAction } from './sidebar/GitFooterAction.tsx'
-import { GitSidebarPopup } from './sidebar/GitSidebarPopup.tsx'
-import { closeFooterPopup, setFooterNavError } from './sidebar/footer-popup-state.ts'
+import { setFooterNavError } from './sidebar/footer-popup-state.ts'
 import { sidebarEn, sidebarZh, type GitSidebarKey } from './sidebar/locales.ts'
 
 export type { GitSidebarKey } from './sidebar/locales.ts'
@@ -48,7 +47,6 @@ export function apply(ctx: ClientContext): void {
       }
       layout.selectPanel(PANEL_ID)
       setFooterNavError(null)
-      closeFooterPopup()
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       try {
@@ -104,20 +102,4 @@ export function apply(ctx: ClientContext): void {
     }
   })
 
-  ctx.slots.inject('shell.overlay', () => {
-    try {
-      return ctx.slots.register(
-        {
-          name: 'shell.overlay',
-          id: 'dsh-web-git-sidebar.footer-popup',
-          locale: PANEL_NS,
-          inject: () => ({
-            openFullPanel,
-          }),
-        },
-        GitSidebarPopup)
-    } catch {
-      return () => {}
-    }
-  })
 }
