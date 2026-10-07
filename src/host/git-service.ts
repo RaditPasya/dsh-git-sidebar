@@ -8,8 +8,8 @@ import { subprocessRunner as sharedSubprocessRunner, type GitRunner } from './gi
 import {
   branchDeleteForceArgv, checkRefFormatArgv, classifySwitchFailure, commitFilesArgv,
   commitHeaderArgv, commitNumstatArgv, createBranchArgv,
-  forEachRefArgv, gitPathArgv, graphLogArgv, headBranchArgv, headShortArgv, identityArgv,
-  operationMarkersArgv, OPERATION_MARKERS, sanitizeWorktreeName, statusPorcelainArgv,
+  forEachRefArgv, gitPathArgv, graphLogArgv, headBranchArgv, identityArgv,
+  operationMarkersArgv, OPERATION_MARKERS, fetchArgv, isUnsafeRefValue, pullArgv, sanitizeWorktreeName, statusPorcelainArgv,
   switchArgv, topLevelArgv, unmergedArgv, validateBranchName, verifyCommitArgv, verifyRefArgv,
   verifyRevArgv, worktreeAddArgv, worktreeListArgv, worktreeRemoveArgv,
   WORKTREE_BRANCH_PREFIX,
@@ -18,7 +18,7 @@ import {
   parseBranches, parseDecoration, parseGraph, parseNameStatus, parseNumstat, parsePorcelain,
   parseWorktreeBranches, parseWorktrees,
   type BranchesView, type CommitDetail, type GitError, type GraphView, type PanelView,
-  type RepoStatus, type SwitchResult, type WorktreeAddResult, type WorktreeListView,
+  type PullResult, type RepoStatus, type SwitchResult, type WorktreeAddResult, type WorktreeListView,
   type WorktreeRemoveResult,
 } from '../core/types.ts'
 import { isManagedWorktreeOf, repoWorktreesDir, worktreePathFor } from './worktree-home.ts'
@@ -58,6 +58,8 @@ export class GitService {
 
   private readonly panelFlights = new Map<string, Promise<PanelView | null>>()
 
+  private readonly worktreesFlights = new Map<string, Promise<WorktreeListView | null>>()
+
   private shareFlight<T>(flights: Map<string, Promise<T>>, key: string, start: () => Promise<T>): Promise<T> {
     const existing = flights.get(key)
     if (existing !== undefined) return existing
@@ -70,80 +72,56 @@ export class GitService {
     return flight
   }
 
-  private async snapshot(path: string, signal?: AbortSignal): Promise<{
+  private async snapshotFromRoot(root: string, signal?: AbortSignal): Promise<{
     root: string
     branch: string
+    head: string
     counts: ReturnType<typeof parsePorcelain>
     operationInProgress: boolean
-  } | null> {
+  }> {
+    const [identity, porcelain] = await Promise.all([
+      this.runner.run(identityArgv(), root, signal),
+      this.runner.run(statusPorcelainArgv(), root, signal),
+    ])
+    const [branchRaw = '', headRaw = ''] = identity.stdout.split('\n')
+    const branch = branchRaw.trim()
+    return {
+      root,
+      branch: branch === DETACHED ? '' : branch,
+      head: headRaw.trim(),
+      counts: parsePorcelain(porcelain.stdout),
+      operationInProgress: await this.operationInProgress(root, signal),
+    }
+  }
+
+  private async snapshot(path: string, signal?: AbortSignal): Promise<Awaited<ReturnType<GitService['snapshotFromRoot']>> | null> {
     const gated = await this.gate(path)
     if (!gated.ok) return null
     const root = await this.repoRoot(gated.canonical, signal)
     if (root === null) return null
-    const [branchResult, porcelain] = await Promise.all([
-      this.runner.run(headBranchArgv(), root, signal),
-      this.runner.run(statusPorcelainArgv(), root, signal),
-    ])
-    const branch = branchResult.stdout.trim()
-    return {
-      root,
-      branch: branch === DETACHED ? '' : branch,
-      counts: parsePorcelain(porcelain.stdout),
-      operationInProgress: await this.operationInProgress(root, signal),
-    }
+    return this.snapshotFromRoot(root, signal)
+  }
+
+  async gatePath(path: string): Promise<string | null> {
+    const gated = await this.gate(path)
+    return gated.ok ? gated.canonical : null
   }
 
   status(path: string, signal?: AbortSignal): Promise<RepoStatus | null> {
-    const existing = this.statusFlights.get(path)
-    if (existing !== undefined) return existing
-    const flight = this.statusFromPath(path, signal)
-    this.statusFlights.set(path, flight)
-    const clear = (): void => {
-      if (this.statusFlights.get(path) === flight) this.statusFlights.delete(path)
-    }
-    void flight.then(clear, clear)
-    return flight
+    return this.shareFlight(this.statusFlights, path, () => this.statusFromPath(path, signal))
   }
 
   private async statusFromPath(path: string, signal?: AbortSignal): Promise<RepoStatus | null> {
-    const gated = await this.gate(path)
-    if (!gated.ok) return null
-    return this.statusFromGatedPath(gated.canonical, signal)
-  }
-
-  private async statusFromGatedPath(path: string, signal?: AbortSignal): Promise<RepoStatus | null> {
-    const snap = await this.snapshotFromGatedPath(path, signal)
+    const snap = await this.snapshot(path, signal)
     if (snap === null) return null
-    const headResult = await this.runner.run(headShortArgv(), snap.root, signal)
     return {
       root: snap.root,
       branch: snap.branch,
-      head: headResult.stdout.trim(),
+      head: snap.head,
       dirtyFiles: snap.counts.dirtyFiles,
       untrackedFiles: snap.counts.untrackedFiles,
       conflicts: snap.counts.conflicts,
       operationInProgress: snap.operationInProgress,
-    }
-  }
-
-  private async snapshotFromGatedPath(path: string, signal?: AbortSignal): Promise<{
-    root: string
-    branch: string
-    counts: ReturnType<typeof parsePorcelain>
-    operationInProgress: boolean
-  } | null> {
-    const root = await this.repoRoot(path, signal)
-    if (root === null) return null
-    const [branchResult, porcelain] = await Promise.all([
-      this.runner.run(headBranchArgv(), root, signal),
-      this.runner.run(statusPorcelainArgv(), root, signal),
-    ])
-    const branch = branchResult.stdout.trim()
-    return {
-      root,
-      branch: branch === DETACHED ? '' : branch,
-      counts: parsePorcelain(porcelain.stdout),
-      operationInProgress: await this.operationInProgress(root, signal),
     }
   }
 
@@ -167,6 +145,9 @@ export class GitService {
   }
 
   async switchBranch(path: string, branch: string): Promise<SwitchResult> {
+    if (isUnsafeRefValue(branch)) {
+      return { ok: false, error: { code: 'invalid-branch-name', message: `invalid branch name: "${branch.slice(0, 100)}"` } }
+    }
     const gated = await this.gate(path)
     if (!gated.ok) return { ok: false, error: WORKSPACE_UNKNOWN }
     const root = await this.repoRoot(gated.canonical)
@@ -211,6 +192,34 @@ export class GitService {
     const created = await this.runner.run(createBranchArgv(name), root)
     if (created.exitCode === 0) return { ok: true, branch: name }
     return { ok: false, error: classifySwitchFailure(created.stderr) }
+  }
+
+  async pull(path: string): Promise<PullResult> {
+    const gated = await this.gate(path)
+    if (!gated.ok) return { ok: false, error: WORKSPACE_UNKNOWN }
+    const root = await this.repoRoot(gated.canonical)
+    if (root === null) return { ok: false, error: { code: 'internal', message: 'not a git repository' } }
+    const pulled = await this.runner.run(pullArgv(), root)
+    if (pulled.exitCode === 0) return { ok: true, output: pulled.stdout.trim() }
+    const message = (pulled.stderr.trim() !== '' ? pulled.stderr : pulled.stdout).trim()
+    return { ok: false, error: { code: 'internal', message: message !== '' ? message : 'git pull failed' } }
+  }
+
+  async fetch(path: string): Promise<PullResult> {
+    const gated = await this.gate(path)
+    if (!gated.ok) return { ok: false, error: WORKSPACE_UNKNOWN }
+    const root = await this.repoRoot(gated.canonical)
+    if (root === null) return { ok: false, error: { code: 'internal', message: 'not a git repository' } }
+    const refs = await this.runner.run(forEachRefArgv(), root)
+    const upstream = parseBranches(refs.stdout).find((b) => b.current)?.upstream ?? ''
+    const slash = upstream.indexOf('/')
+    if (upstream === '' || slash < 0) {
+      return { ok: false, error: { code: 'internal', message: 'no upstream configured' } }
+    }
+    const fetched = await this.runner.run(fetchArgv(upstream.slice(0, slash), upstream.slice(slash + 1)), root)
+    if (fetched.exitCode === 0) return { ok: true, output: fetched.stdout.trim() }
+    const message = (fetched.stderr.trim() !== '' ? fetched.stderr : fetched.stdout).trim()
+    return { ok: false, error: { code: 'internal', message: message !== '' ? message : 'git fetch failed' } }
   }
 
   async graph(path: string, limit = 200): Promise<GraphView | null> {
@@ -325,6 +334,10 @@ export class GitService {
   }
 
   async worktrees(path: string, signal?: AbortSignal): Promise<WorktreeListView | null> {
+    return this.shareFlight(this.worktreesFlights, path, () => this.worktreesFromPath(path, signal))
+  }
+
+  private async worktreesFromPath(path: string, signal?: AbortSignal): Promise<WorktreeListView | null> {
     const gated = await this.gate(path)
     if (!gated.ok) return null
     const root = await this.repoRoot(gated.canonical, signal)
@@ -357,6 +370,9 @@ export class GitService {
       return { ok: false, error: { code: 'worktree-already-exists', message: `worktree path already exists: ${target}` } }
     }
     let base = baseRef === undefined || baseRef.trim() === '' ? 'HEAD' : baseRef.trim()
+    if (isUnsafeRefValue(base)) {
+      return { ok: false, error: { code: 'base-ref-not-found', message: `base ref "${base.slice(0, 100)}" does not resolve` } }
+    }
     const verified = await this.runner.run(verifyRevArgv(base), root)
     if (verified.exitCode !== 0) {
       if (base === 'origin/HEAD') {
@@ -379,6 +395,9 @@ export class GitService {
     worktreePath: string,
     opts: { force?: boolean; deleteBranch?: boolean } = {},
   ): Promise<WorktreeRemoveResult> {
+    if (isUnsafeRefValue(worktreePath)) {
+      return { ok: false, error: { code: 'worktree-not-found', message: 'not a managed worktree of this repository' } }
+    }
     const gated = await this.gate(path)
     if (!gated.ok) return { ok: false, error: WORKSPACE_UNKNOWN }
     const root = await this.repoRoot(gated.canonical)
@@ -399,16 +418,14 @@ export class GitService {
       return { ok: false, error: { code: 'worktree-not-found', message: 'not a managed worktree of this repository' } }
     }
     const listed = await this.runner.run(worktreeListArgv(), root)
-    let entry: ReturnType<typeof parseWorktrees>[number] | undefined
-    for (const item of parseWorktrees(listed.stdout)) {
+    const matches = await Promise.all(parseWorktrees(listed.stdout).map(async (item) => {
       try {
-        if (await realpath(item.path) === canonical) {
-          entry = item
-          break
-        }
+        return (await realpath(item.path)) === canonical ? item : undefined
       } catch {
+        return undefined
       }
-    }
+    }))
+    const entry = matches.find((item) => item !== undefined)
     if (entry === undefined) {
       return { ok: false, error: { code: 'worktree-not-found', message: `git does not list ${canonical} as a worktree` } }
     }
@@ -450,13 +467,12 @@ export class GitService {
         .filter((line) => line !== '')
       return markerPaths.some((markerPath) => existsSync(resolve(root, markerPath)))
     }
-    let inProgress = false
-    for (const marker of OPERATION_MARKERS) {
+    const checks = await Promise.all(OPERATION_MARKERS.map(async (marker) => {
       const single = await this.runner.run(gitPathArgv(marker), root, signal)
       const markerPath = single.stdout.trim()
-      if (markerPath !== '' && existsSync(resolve(root, markerPath))) inProgress = true
-    }
-    return inProgress
+      return markerPath !== '' && existsSync(resolve(root, markerPath))
+    }))
+    return checks.some(Boolean)
   }
 
   private async guardBlock(root: string, target: string | undefined): Promise<GitError | null> {

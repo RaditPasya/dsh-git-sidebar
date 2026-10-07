@@ -1,5 +1,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
+import { realpath } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
@@ -83,18 +85,23 @@ export function buildWorktreeTool(ctx: Context, service: GitService): ToolDefini
         case 'create': {
           const rawName = typeof input.name === 'string' && input.name.trim() !== ''
             ? input.name
-            : `agent-${Date.now().toString(36)}`
+            : `agent-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
           const baseRef = typeof input.baseRef === 'string' && input.baseRef.trim() !== '' ? input.baseRef : undefined
           const result = await service.addWorktree(cwd, rawName, baseRef)
           if (!result.ok) return { ok: false, code: result.error.code, message: result.error.message }
-          const workspace = await ctx.workspaceRegistry.create(result.path, `wt: ${result.name}`)
-          return {
-            ok: true,
-            path: result.path,
-            branch: result.branch,
-            name: result.name,
-            workspaceId: String(workspace.id),
-            note: 'The current session stays in its original checkout; open a new session on the registered workspace to work inside the worktree.',
+          try {
+            const workspace = await ctx.workspaceRegistry.create(result.path, `wt: ${result.name}`)
+            return {
+              ok: true,
+              path: result.path,
+              branch: result.branch,
+              name: result.name,
+              workspaceId: String(workspace.id),
+              note: 'The current session stays in its original checkout; open a new session on the registered workspace to work inside the worktree.',
+            }
+          } catch (error: unknown) {
+            await service.removeWorktree(cwd, result.path, { force: true }).catch(() => undefined)
+            return { ok: false, code: 'internal', message: error instanceof Error ? error.message : 'workspace registration failed' }
           }
         }
         case 'remove': {
@@ -106,7 +113,12 @@ export function buildWorktreeTool(ctx: Context, service: GitService): ToolDefini
             deleteBranch: input.deleteBranch === true,
           })
           if (!result.ok) return { ok: false, code: result.error.code, message: result.error.message }
-          const linked = ctx.workspaceRegistry.list().find(item => item.path === input.worktreePath)
+          let target = input.worktreePath
+          try {
+            target = await realpath(input.worktreePath)
+          } catch {
+          }
+          const linked = ctx.workspaceRegistry.list().find(item => item.path === input.worktreePath || item.path === target)
           if (linked !== undefined) await ctx.workspaceRegistry.delete(linked.id)
           return { ok: true, removed: input.worktreePath }
         }

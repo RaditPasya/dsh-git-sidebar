@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import {
   isBranchesView, isCommitDetail, isGitError, isGitFeatureConfig, isGraphView, isPanelView, isRepoStatus,
-  isWorktreeListView,
+  isResultPayload, isWorktreeListView,
   type GitError, type GitFeatureConfig,
 } from '../core/types.ts'
 import { PollGuard } from './poll-guard.ts'
@@ -27,6 +27,16 @@ const OK = (value: unknown): GitEnvelope<unknown> => ({ ok: true, value })
 const FAIL = (error: GitError): GitEnvelope<never> => ({ ok: false, error })
 
 const BAD_REQUEST: GitError = { code: 'internal', message: 'malformed request' }
+
+const MAX_SUBSCRIBERS = 100
+
+function okPayload(res: ServerResponse, value: Record<string, string>): void {
+  if (!isResultPayload(value)) {
+    writeJson(res, 200, FAIL(MALFORMED_VIEW))
+    return
+  }
+  writeJson(res, 200, OK(value))
+}
 
 interface Subscriber {
   path: string
@@ -143,7 +153,7 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
       return
     }
     const pathname = new URL(req.url ?? '/', 'http://x').pathname
-    const payload = await readJsonBody(req, { maxBytes: 1024 * 1024 })
+    const payload = await readJsonBody(req)
     if (pathname === '/git-sidebar/config') {
       const view = config()
       writeJson(res, 200, isGitFeatureConfig(view) ? OK(view) : FAIL(MALFORMED_VIEW))
@@ -196,7 +206,7 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
           return
         }
         const result = await service.switchBranch(path, branch)
-        writeJson(res, 200, result.ok ? OK({ branch: result.branch }) : FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW))
+        if (result.ok) { okPayload(res, { branch: result.branch }) } else { writeJson(res, 200, FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW)) }
         return
       }
       case '/git-sidebar/create-branch': {
@@ -208,12 +218,22 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
           return
         }
         const result = await service.createBranch(path, name)
-        writeJson(res, 200, result.ok ? OK({ branch: result.branch }) : FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW))
+        if (result.ok) { okPayload(res, { branch: result.branch }) } else { writeJson(res, 200, FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW)) }
+        return
+      }
+      case '/git-sidebar/pull': {
+        const result = await service.pull(path)
+        if (result.ok) { okPayload(res, { output: result.output }) } else { writeJson(res, 200, FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW)) }
         return
       }
       case '/git-sidebar/worktrees':
         okView(res, await service.worktrees(path), isWorktreeListView)
         return
+      case '/git-sidebar/fetch': {
+        const result = await service.fetch(path)
+        if (result.ok) { okPayload(res, { output: result.output }) } else { writeJson(res, 200, FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW)) }
+        return
+      }
       case '/git-sidebar/worktree-add': {
         const record = typeof payload === 'object' && payload !== null
           ? payload as Record<string, unknown>
@@ -226,7 +246,7 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
           return
         }
         const result = await service.addWorktree(path, name, baseRef)
-        writeJson(res, 200, result.ok ? OK({ path: result.path, branch: result.branch, name: result.name }) : FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW))
+        if (result.ok) { okPayload(res, { path: result.path, branch: result.branch, name: result.name }) } else { writeJson(res, 200, FAIL(isGitError(result.error) ? result.error : MALFORMED_VIEW)) }
         return
       }
       case '/git-sidebar/worktree-remove': {
@@ -263,15 +283,26 @@ export function registerGitRoutes(ctx: Context, service: GitService, config: () 
     }
   }
 
-  const sse = (req: IncomingMessage, res: ServerResponse): void => {
+  const sse = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (!isGitAllowed(ctx, req)) {
       writeJson(res, 403, { error: 'forbidden: loopback-only' })
       return
     }
     const url = new URL(req.url ?? '/', 'http://x')
-    const path = url.searchParams.get('path')
-    if (path === null || path === '') {
+    const rawPath = url.searchParams.get('path')
+    if (rawPath === null || rawPath === '') {
       res.writeHead(400)
+      res.end()
+      return
+    }
+    if (subscribers.size >= MAX_SUBSCRIBERS) {
+      res.writeHead(429)
+      res.end()
+      return
+    }
+    const path = await service.gatePath(rawPath)
+    if (path === null) {
+      res.writeHead(404)
       res.end()
       return
     }

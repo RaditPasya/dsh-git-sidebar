@@ -31,8 +31,17 @@ function createWorkspaceGate(ctx: Context): WorkspaceGate {
     } catch {
       return { ok: false, error: { code: 'workspace-unknown', message: 'path does not resolve on disk' } }
     }
-    if (ctx.workspaceRegistry.list().some(workspace => workspace.path === canonical)) {
+    const registered = ctx.workspaceRegistry.list()
+    if (registered.some(workspace => workspace.path === canonical)) {
       return { ok: true, canonical }
+    }
+    for (const workspace of registered) {
+      try {
+        if (await realpath(workspace.path) === canonical) {
+          return { ok: true, canonical }
+        }
+      } catch {
+      }
     }
     return { ok: false, error: { code: 'workspace-unknown', message: 'path is not a registered workspace' } }
   }
@@ -42,13 +51,14 @@ export const apply = mountOnce('dsh-web-git-sidebar', applyImpl)
 
 function applyImpl(ctx: Context, config?: Config): void {
   const service = new GitService(subprocessRunner(ctx), createWorkspaceGate(ctx))
+  const home = worktreesHome()
 
   const featureConfig = (): GitFeatureConfig => {
     const active = effectiveConfig(config)
     return {
       autoIsolate: active.autoIsolate,
       autoBaseline: active.autoBaseline,
-      worktreesHome: worktreesHome(),
+      worktreesHome: home,
     }
   }
 
