@@ -1,81 +1,80 @@
 
-export interface PollTimers {
-  set: (fn: () => void, ms: number) => unknown
-  clear: (handle: unknown) => void
-}
-
-const DEFAULT_TIMERS: PollTimers = {
-  set: (fn, ms) => setTimeout(fn, ms),
-  clear: (handle) => { clearTimeout(handle as ReturnType<typeof setTimeout>) },
-}
-
+/**
+ * Interval scheduler with anti-overlap and a bounded idle backoff.
+ *
+ * `onRun` reports whether anything changed. An unchanged tick widens the delay;
+ * a changed tick snaps back to the base interval. The ceiling is intentionally
+ * shallow, because this poll is the only way the UI learns about changes it did
+ * not cause (agent commits, git run in a terminal).
+ */
 export interface PollGuardOptions {
   intervalMs: number
-  deadlineMs: number
-  maxBackoffMs: number
-  timers?: PollTimers
-  onDeadline?: () => void
-  onSettled?: (consecutiveFailures: number) => void
-  onRun: () => Promise<void>
+  /** Idle ceiling. Defaults to `intervalMs`, which disables backoff entirely. */
+  maxIntervalMs?: number
+  onRun: () => Promise<boolean>
+}
+
+/** Pure so the backoff policy is verifiable without waiting on timers. */
+export function nextInterval(currentMs: number, baseMs: number, maxMs: number, changed: boolean): number {
+  if (changed) return baseMs
+  return Math.min(currentMs * 2, Math.max(baseMs, maxMs))
 }
 
 export class PollGuard {
-  private readonly options: Required<PollGuardOptions>
-  private handle: unknown
+  private handle: ReturnType<typeof setTimeout> | undefined
   private running = false
-  private startedAt = 0
   private stopped = false
-  private failures = 0
+  private readonly baseMs: number
+  private readonly maxMs: number
+  private currentMs: number
 
-  constructor(options: PollGuardOptions) {
-    this.options = {
-      timers: DEFAULT_TIMERS,
-      onDeadline: () => {},
-      onSettled: () => {},
-      ...options,
-    }
+  constructor(private readonly options: PollGuardOptions) {
+    this.baseMs = options.intervalMs
+    this.maxMs = options.maxIntervalMs ?? options.intervalMs
+    this.currentMs = this.baseMs
   }
 
   start(): void {
-    if (this.startedAt !== 0) return
-    this.startedAt = Date.now()
-    this.schedule(this.options.intervalMs)
+    if (this.stopped || this.handle !== undefined) return
+    this.currentMs = this.baseMs
+    this.schedule(this.currentMs)
   }
 
   stop(): void {
     this.stopped = true
-    this.options.timers.clear(this.handle)
+    if (this.handle !== undefined) clearTimeout(this.handle)
     this.handle = undefined
+  }
+
+  /** The delay currently scheduled — observability, and the test seam. */
+  interval(): number {
+    return this.currentMs
   }
 
   private schedule(delayMs: number): void {
     if (this.stopped) return
-    this.handle = this.options.timers.set(() => { void this.tick() }, delayMs)
-  }
-
-  private delay(): number {
-    const backoff = this.options.intervalMs * 2 ** Math.min(this.failures, 8)
-    return Math.min(backoff, this.options.maxBackoffMs)
+    this.handle = setTimeout(() => { void this.tick() }, delayMs)
+    this.handle.unref?.()
   }
 
   private async tick(): Promise<void> {
     if (this.stopped) return
-    if (this.running) return // Anti-overlap: drop ticks that arrive mid-run.
-    if (Date.now() - this.startedAt >= this.options.deadlineMs) {
-      this.stopped = true
-      this.options.onDeadline()
+    if (this.running) {
+      // A run outlived its interval. Keep the cadence instead of stacking.
+      this.schedule(this.currentMs)
       return
     }
     this.running = true
+    let changed = false
     try {
-      await this.options.onRun()
-      this.failures = 0
+      changed = await this.options.onRun()
     } catch {
-      this.failures += 1
+      // A thrown tick is not evidence of change, so let the backoff widen.
+      changed = false
     } finally {
       this.running = false
-      this.options.onSettled(this.failures)
-      this.schedule(this.delay())
+      this.currentMs = nextInterval(this.currentMs, this.baseMs, this.maxMs, changed)
+      this.schedule(this.currentMs)
     }
   }
 }

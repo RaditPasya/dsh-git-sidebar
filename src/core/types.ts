@@ -64,14 +64,8 @@ export type WorktreeAddResult =
   | { ok: false; error: GitError }
 
 export type WorktreeRemoveResult =
-  | { ok: true }
+  | { ok: true; branchDeleted: boolean; branchDeleteError?: string }
   | { ok: false; error: GitError }
-
-export interface GitFeatureConfig {
-  autoIsolate: boolean
-  autoBaseline: 'current' | 'default'
-  worktreesHome: string
-}
 
 export type GitErrorCode =
   | 'conflicts-present'
@@ -89,6 +83,7 @@ export type GitErrorCode =
   | 'worktree-not-found'
   | 'worktree-is-main'
   | 'base-ref-not-found'
+  | 'timeout'
   | 'internal'
 
 export interface GitError {
@@ -442,6 +437,7 @@ const GIT_ERROR_CODES = new Set<GitErrorCode>([
   'worktree-not-found',
   'worktree-is-main',
   'base-ref-not-found',
+  'timeout',
   'internal',
 ])
 
@@ -459,14 +455,6 @@ export function isWorktreeListView(value: unknown): value is WorktreeListView {
   const record = value as Record<string, unknown>
   return typeof record.root === 'string'
     && Array.isArray(record.worktrees) && record.worktrees.every(isWorktreeInfo)
-}
-
-export function isGitFeatureConfig(value: unknown): value is GitFeatureConfig {
-  if (typeof value !== 'object' || value === null) return false
-  const record = value as Record<string, unknown>
-  return typeof record.autoIsolate === 'boolean'
-    && (record.autoBaseline === 'current' || record.autoBaseline === 'default')
-    && typeof record.worktreesHome === 'string'
 }
 
 export function isGitErrorCode(value: unknown): value is GitErrorCode {

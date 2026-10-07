@@ -7,8 +7,6 @@ export const headBranchArgv = (): string[] => ['rev-parse', '--abbrev-ref', 'HEA
 
 export const identityArgv = (): string[] => ['rev-parse', '--abbrev-ref', 'HEAD', '--short', 'HEAD']
 
-export const headShortArgv = (): string[] => ['rev-parse', '--short', 'HEAD']
-
 export const forEachRefArgv = (): string[] => [
   'for-each-ref', 'refs/heads',
   '--format=%(refname:short)%00%(HEAD)%00%(objectname)%00%(upstream:short)%00%(upstream:track)',
@@ -45,7 +43,9 @@ export const worktreeAddArgv = (path: string, branch: string, baseRef: string): 
 export const worktreeRemoveArgv = (path: string, force: boolean): string[] =>
   force ? ['worktree', 'remove', '--force', path] : ['worktree', 'remove', path]
 
-export const branchDeleteForceArgv = (name: string): string[] => ['branch', '-D', '--', name]
+/** `-d` refuses to drop unmerged work; `-D` overrides it, so force is explicit. */
+export const branchDeleteArgv = (name: string, force: boolean): string[] =>
+  force ? ['branch', '-D', '--', name] : ['branch', '-d', '--', name]
 
 export const verifyRevArgv = (rev: string): string[] => ['rev-parse', '--verify', '--quiet', rev, '--']
 

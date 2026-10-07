@@ -5,9 +5,18 @@ import { randomUUID } from 'node:crypto'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import type { GitService } from './git-service.ts'
+import type { GitError } from '../core/types.ts'
+import { GitTimeoutError, type GitService } from './git-service.ts'
 
 export const GIT_WORKTREE_TOOL = 'git_worktree'
+
+/** Turns a rejected service call into the same failure shape the services return. */
+function toolFailure(error: unknown): { ok: false; error: GitError } {
+  if (error instanceof GitTimeoutError) {
+    return { ok: false, error: { code: 'timeout', message: error.message } }
+  }
+  return { ok: false, error: { code: 'internal', message: error instanceof Error ? error.message : 'git_worktree failed' } }
+}
 
 interface ToolArgs {
   action?: unknown
@@ -78,7 +87,7 @@ export function buildWorktreeTool(ctx: Context, service: GitService): ToolDefini
       }
       switch (input.action) {
         case 'list': {
-          const view = await service.worktrees(cwd, exec.signal)
+          const view = await service.worktrees(cwd).catch(() => null)
           if (view === null) return { ok: false, code: 'workspace-unknown', message: 'not a git workspace' }
           return { ok: true, root: view.root, worktrees: view.worktrees }
         }
@@ -87,7 +96,7 @@ export function buildWorktreeTool(ctx: Context, service: GitService): ToolDefini
             ? input.name
             : `agent-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
           const baseRef = typeof input.baseRef === 'string' && input.baseRef.trim() !== '' ? input.baseRef : undefined
-          const result = await service.addWorktree(cwd, rawName, baseRef)
+          const result = await service.addWorktree(cwd, rawName, baseRef).catch(toolFailure)
           if (!result.ok) return { ok: false, code: result.error.code, message: result.error.message }
           try {
             const workspace = await ctx.workspaceRegistry.create(result.path, `wt: ${result.name}`)
@@ -111,16 +120,25 @@ export function buildWorktreeTool(ctx: Context, service: GitService): ToolDefini
           const result = await service.removeWorktree(cwd, input.worktreePath, {
             force: input.force === true,
             deleteBranch: input.deleteBranch === true,
-          })
+          }).catch(toolFailure)
           if (!result.ok) return { ok: false, code: result.error.code, message: result.error.message }
           let target = input.worktreePath
           try {
             target = await realpath(input.worktreePath)
           } catch {
+            // The path may already be gone; fall back to the reported string.
           }
           const linked = ctx.workspaceRegistry.list().find(item => item.path === input.worktreePath || item.path === target)
           if (linked !== undefined) await ctx.workspaceRegistry.delete(linked.id)
-          return { ok: true, removed: input.worktreePath }
+          if (result.branchDeleteError !== undefined) {
+            return {
+              ok: true,
+              removed: input.worktreePath,
+              branchDeleted: false,
+              branchDeleteWarning: result.branchDeleteError,
+            }
+          }
+          return { ok: true, removed: input.worktreePath, branchDeleted: result.branchDeleted }
         }
         default:
           return { ok: false, code: 'internal', message: "action must be one of 'create', 'list', 'remove'" }

@@ -4,12 +4,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-workspace'
-import type { GitFeatureConfig } from './core/types.ts'
 import { Config, effectiveConfig } from './host/config.ts'
 import { GitService, subprocessRunner, type WorkspaceGate } from './host/git-service.ts'
 import { registerGitRoutes } from './host/routes.ts'
 import { buildWorktreeTool } from './host/agent-tool.ts'
-import { worktreesHome } from './host/worktree-home.ts'
 import { mountOnce } from './mount-once.ts'
 
 export const inject = ['webServer', 'subprocess', 'workspaceRegistry']
@@ -41,6 +39,7 @@ function createWorkspaceGate(ctx: Context): WorkspaceGate {
           return { ok: true, canonical }
         }
       } catch {
+        // A workspace row whose path no longer resolves cannot match.
       }
     }
     return { ok: false, error: { code: 'workspace-unknown', message: 'path is not a registered workspace' } }
@@ -51,16 +50,6 @@ export const apply = mountOnce('dsh-web-git-sidebar', applyImpl)
 
 function applyImpl(ctx: Context, config?: Config): void {
   const service = new GitService(subprocessRunner(ctx), createWorkspaceGate(ctx))
-  const home = worktreesHome()
-
-  const featureConfig = (): GitFeatureConfig => {
-    const active = effectiveConfig(config)
-    return {
-      autoIsolate: active.autoIsolate,
-      autoBaseline: active.autoBaseline,
-      worktreesHome: home,
-    }
-  }
 
   let toolFiber: ReturnType<Context['inject']> | undefined
   const syncTool = (): void => {
@@ -84,7 +73,7 @@ function applyImpl(ctx: Context, config?: Config): void {
 
   ctx.effect(() => {
     syncTool()
-    const disposeRoutes = registerGitRoutes(ctx, service, featureConfig)
+    const disposeRoutes = registerGitRoutes(ctx, service)
     return () => {
       disposeRoutes()
       toolFiber?.dispose()

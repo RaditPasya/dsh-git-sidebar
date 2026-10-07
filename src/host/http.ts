@@ -1,29 +1,26 @@
 
 import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http'
 
-const DEFAULT_JSON_BODY_MAX_BYTES = 64 * 1024
+export const DEFAULT_JSON_BODY_MAX_BYTES = 64 * 1024
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
   'referrer-policy': 'no-referrer',
 } satisfies OutgoingHttpHeaders
 
-export async function readBoundedJson(req: IncomingMessage, maxBytes: number): Promise<unknown> {
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    const buffer = chunk as Buffer
-    size += buffer.length
-    if (size > maxBytes) throw new Error('body too large')
-    chunks.push(buffer)
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-}
+export type JsonBodyOutcome =
+  | { ok: true; value: unknown }
+  | { ok: false; reason: 'empty' | 'malformed' | 'too-large' }
 
+/**
+ * Reads a size-capped JSON body. The outcome distinguishes an empty body from
+ * malformed JSON from an over-cap body so callers can answer 400 vs 413 instead
+ * of collapsing every case into one opaque failure.
+ */
 export async function readJsonBody(
   req: IncomingMessage,
-  opts: { maxBytes?: number; objectOnly?: boolean } = {},
-): Promise<unknown | null> {
+  opts: { maxBytes?: number } = {},
+): Promise<JsonBodyOutcome> {
   const maxBytes = opts.maxBytes ?? DEFAULT_JSON_BODY_MAX_BYTES
   const chunks: Buffer[] = []
   let size = 0
@@ -32,33 +29,17 @@ export async function readJsonBody(
     size += buffer.length
     if (size > maxBytes) {
       req.destroy()
-      return null
+      return { ok: false, reason: 'too-large' }
     }
     chunks.push(buffer)
   }
   const text = Buffer.concat(chunks).toString('utf8')
-  if (text === '') return null
+  if (text === '') return { ok: false, reason: 'empty' }
   try {
-    const parsed: unknown = JSON.parse(text)
-    if (opts.objectOnly && !isJsonObject(parsed)) return null
-    return parsed
+    return { ok: true, value: JSON.parse(text) as unknown }
   } catch {
-    return null
+    return { ok: false, reason: 'malformed' }
   }
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-export function asJsonObject(value: unknown): Record<string, unknown> | undefined {
-  return isJsonObject(value) ? value : undefined
-}
-
-export function withIdentityEncoding(init: RequestInit = {}): RequestInit {
-  const headers = new Headers(init.headers)
-  headers.set('accept-encoding', 'identity')
-  return { ...init, headers }
 }
 
 export function writeJson(
