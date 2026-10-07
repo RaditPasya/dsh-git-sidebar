@@ -8,8 +8,8 @@
 Branches, graph, previews, and push-state — one click from the left rail. No telemetry. No cloud. Just git.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-[![DSH](https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square)](https://github.com/RaditPasya/dsh-git-sidebar)
-[![Platform](https://img.shields.io/badge/platform-web-333?style=flat-square)](https://github.com/RaditPasya/dsh-git-sidebar)
+[![DSH](https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square)](https://github.com/RaditPasya/dsh-web-git-sidebar)
+[![Platform](https://img.shields.io/badge/platform-web-333?style=flat-square)](https://github.com/RaditPasya/dsh-web-git-sidebar)
 
 [Features](#what-you-get) · [Install](#install) · [Tour](#tour) · [Dev](#dev-loop)
 
@@ -44,8 +44,8 @@ Restart the web UI once (new host routes), refresh — the **Git icon** appears 
 
 > Local hacking? Clone and link it instead:
 > ```sh
-> git clone https://github.com/RaditPasya/dsh-git-sidebar.git
-> dsh plugin --profile web add link:$(pwd)/dsh-git-sidebar
+> git clone https://github.com/RaditPasya/dsh-web-git-sidebar.git
+> dsh plugin --profile web add link:$(pwd)/dsh-web-git-sidebar
 > ```
 
 ## Dev loop
