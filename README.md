@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🌿 DSH Web Git Sidebar
+# <img src="icon.svg" width="36" height="36" /> DSH Web Git Sidebar
 
 ### Git, where your eyes already are.
 
