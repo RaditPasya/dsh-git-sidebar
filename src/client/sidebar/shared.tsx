@@ -5,7 +5,7 @@ import type { PropsLocale, PropsRuntime, Translate } from '@deepseek-ai/dsh-clie
 // this file previously reached for structural casts.
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-import type { BranchesView, GraphView, RepoStatus } from '../../core/types.ts'
+import type { BranchesView, GraphView, RepoStatus, SvgGraphRow } from '../../core/types.ts'
 import { GitApi, subscribeChanges } from '../api.ts'
 import type { GitSidebarKey } from './locales.ts'
 
@@ -491,4 +491,43 @@ export function fileStatusColor(status: string): string {
   if (status === 'A') return token.success
   if (status === 'D') return token.error
   return token.warn
+}
+
+export function GraphCell({ row, width, rowH }: { row: SvgGraphRow | undefined; width: number; rowH: number }) {
+  if (row === undefined) return <span style={{ width, flex: 'none' }} aria-hidden="true" />
+  const bend = Math.max(6, rowH * 0.28)
+  const dotR = Math.max(2.5, (rowH / 36) * 4)
+  return (
+    <svg width={width} height={rowH} aria-hidden="true" style={{ flex: 'none', display: 'block' }}>
+      {row.segs.map((s, k) => s.curve ? (
+        <path
+          key={k}
+          d={`M ${s.x1} ${s.y1} C ${s.x1} ${s.y1 + bend}, ${s.x2} ${s.y2 - bend}, ${s.x2} ${s.y2}`}
+          stroke={laneColor(s.color)}
+          strokeWidth={2}
+          fill="none"
+          strokeLinecap="round"
+        />
+      ) : (
+        <line
+          key={k}
+          x1={s.x1}
+          y1={s.y1}
+          x2={s.x2}
+          y2={s.y2}
+          stroke={laneColor(s.color)}
+          strokeWidth={2}
+          strokeLinecap="round"
+        />
+      ))}
+      {row.merge ? (
+        <>
+          <circle cx={row.nodeX} cy={row.nodeY} r={dotR + 2} fill="none" stroke={laneColor(row.color)} strokeWidth={2} />
+          <circle cx={row.nodeX} cy={row.nodeY} r={Math.max(1.5, dotR - 1.5)} fill={laneColor(row.color)} />
+        </>
+      ) : (
+        <circle cx={row.nodeX} cy={row.nodeY} r={dotR} fill={laneColor(row.color)} />
+      )}
+    </svg>
+  )
 }

@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { computeSvgGraph } from '../../core/types.ts'
 import type { CommitDetail } from '../../core/types.ts'
 import { sharedGitApi } from './shared.tsx'
 import {
   AuthorTag,
+  GraphCell,
   SkeletonRows,
   commitHoverTitle,
   ensureSidebarStyles,
@@ -31,6 +33,9 @@ export type GitFooterActionProps =
 
 const DOCK_MIN_HEIGHT = 140
 const DOCK_MAX_HEIGHT = 640
+const DOCK_ROW_H = 36
+const DOCK_LANE_W = 10
+const DOCK_COMMIT_LIMIT = 30
 const DOCK_KEYBOARD_STEP = 16
 const DOCK_HEIGHT_KEY = 'dsh-web-git-sidebar.dockHeight'
 const PULL_ORANGE = '#e8833c'
@@ -63,6 +68,10 @@ export function GitFooterAction(props: GitFooterActionProps) {
   )
 
   const { status, branches, graph, error, loading, refresh } = useGitSnapshot(firstPath, t, 200)
+  const dockGraph = useMemo(
+    () => computeSvgGraph((graph?.commits ?? []).slice(0, DOCK_COMMIT_LIMIT), DOCK_ROW_H, DOCK_LANE_W, 90),
+    [graph],
+  )
   const [busy, setBusy] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
   const [detailOid, setDetailOid] = useState<string | null>(null)
@@ -475,28 +484,33 @@ export function GitFooterAction(props: GitFooterActionProps) {
             <div style={sectionTitle}>{t('popup.recentCommits')}</div>
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               {loading && <SkeletonRows rows={4} height={30} />}
-              {!loading && (graph?.commits ?? []).slice(0, 30).map((c) => {
+              {!loading && (graph?.commits ?? []).slice(0, 30).map((c, i) => {
                 const loaded = detailOid === c.oid && detail !== undefined && detail !== null && detail.oid === c.oid
                 return (
                   <div key={c.oid} className="gs-virtual-row" style={commitRow}>
-                    <button
-                      type="button"
-                      onClick={() => void openCommit(c.oid)}
-                      className="gs-btn gs-row"
-                      style={commitButton}
-                      aria-expanded={detailOid === c.oid}
-                      title={loaded && detail
-                        ? `${c.subject}\n${detail.author} · ${formatDateTime(detail.authorTime)}\n+${detail.insertions} −${detail.deletions}${detail.body !== undefined ? `\n\n${detail.body}` : ''}`
-                        : commitHoverTitle(c.subject, c.author, c.authorTime)}
-                    >
-                      <span style={{ fontFamily: 'monospace', opacity: 0.65, fontSize: 11 }}>{c.oid.slice(0, 7)}</span>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                        {c.subject}
-                      </span>
-                    </button>
-                    <div style={commitMeta}>
-                      <AuthorTag name={c.author} />
-                      <span>· {formatRelativeTime(t, c.authorTime)}</span>
+                    <div style={commitHead}>
+                      <GraphCell row={dockGraph.rows[i]} width={dockGraph.width} rowH={DOCK_ROW_H} />
+                      <div style={commitText}>
+                        <button
+                          type="button"
+                          onClick={() => void openCommit(c.oid)}
+                          className="gs-btn gs-row"
+                          style={commitButton}
+                          aria-expanded={detailOid === c.oid}
+                          title={loaded && detail
+                            ? `${c.subject}\n${detail.author} · ${formatDateTime(detail.authorTime)}\n+${detail.insertions} −${detail.deletions}${detail.body !== undefined ? `\n\n${detail.body}` : ''}`
+                            : commitHoverTitle(c.subject, c.author, c.authorTime)}
+                        >
+                          <span style={{ fontFamily: 'monospace', opacity: 0.65, fontSize: 11 }}>{c.oid.slice(0, 7)}</span>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                            {c.subject}
+                          </span>
+                        </button>
+                        <div style={commitMeta}>
+                          <AuthorTag name={c.author} />
+                          <span>· {formatRelativeTime(t, c.authorTime)}</span>
+                        </div>
+                      </div>
                     </div>
                     <div className={`gs-expand${detailOid === c.oid ? '' : ' gs-collapsed'}`} aria-hidden={detailOid !== c.oid}>
                       <div>
@@ -558,7 +572,9 @@ const pickerRow: CSSProperties = { display: 'flex', justifyContent: 'space-betwe
 const pickerRowCurrent: CSSProperties = { borderColor: token.brand, fontWeight: 700, backgroundColor: token.activeBg }
 const toastStyle: CSSProperties = { position: 'absolute', top: 40, left: 8, right: 8, zIndex: 6, textAlign: 'center', fontSize: 12, padding: '6px 8px', background: 'var(--dsw-specific-input-major, #131518)', color: 'var(--dsw-alias-label-primary, #e8eaed)', border: `1px solid ${token.border}`, borderRadius: 8, boxShadow: 'var(--dsw-shadow-lv3, 0 12px 40px rgba(0,0,0,0.55))', pointerEvents: 'none' }
 const emptyStyle: CSSProperties = { opacity: 0.6, fontSize: 12, padding: 6 }
-const commitRow: CSSProperties = { borderBottom: `1px solid ${token.border}`, padding: '5px 0' }
+const commitRow: CSSProperties = { borderBottom: `1px solid ${token.border}`, padding: 0 }
+const commitHead: CSSProperties = { display: 'flex', gap: 6, height: 42, padding: '3px 0', boxSizing: 'border-box', overflow: 'hidden' }
+const commitText: CSSProperties = { flex: 1, minWidth: 0 }
 const commitMeta: CSSProperties = { fontSize: 11, color: token.labelSecondary, marginLeft: 2, display: 'flex', alignItems: 'center', gap: 4 }
 const commitDetail: CSSProperties = { margin: '4px 0 4px 2px', fontSize: 12 }
 const detailFileRow: CSSProperties = { display: 'flex', gap: 6, padding: '1px 0' }

@@ -282,49 +282,98 @@ export function parseDecoration(decoration: string): string[] {
   }).filter(name => name !== '')
 }
 
-export type LaneGlyph = 'node' | 'pass' | 'merge' | 'gap'
-
-export interface GraphRowLanes {
-  columns: LaneGlyph[]
-  nodeColumn: number
-  merge: boolean
+export interface SvgGraphSeg {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  color: number
+  curve: boolean
 }
 
-export function computeLanes(rows: readonly GraphCommit[]): GraphRowLanes[] {
-  const later = new Set<string>()
-  for (const row of rows) {
-    for (const parent of row.parents) later.add(parent)
+export interface SvgGraphRow {
+  nodeX: number
+  nodeY: number
+  color: number
+  merge: boolean
+  segs: SvgGraphSeg[]
+}
+
+function claimLane(lanes: (string | null)[], oid: string): number {
+  const free = lanes.findIndex((slot) => slot === null)
+  if (free === -1) {
+    lanes.push(oid)
+    return lanes.length - 1
   }
+  lanes[free] = oid
+  return free
+}
+
+export function computeSvgGraph(rows: readonly GraphCommit[], rowH: number, laneW: number, maxWidth = Infinity): { width: number; rows: SvgGraphRow[] } {
   const lanes: (string | null)[] = []
-  const result: GraphRowLanes[] = []
+  const out: SvgGraphRow[] = []
+  let maxCols = 1
+  // Lanes are only opened for parents visible in this window. Anything below
+  // the fold would otherwise spawn full-height rails that can never join back
+  // on screen (the barcode effect on merge-heavy histories).
+  const inWindow = new Set(rows.map((row) => row.oid))
+  const x = (col: number): number => col * laneW + laneW / 2
+  const ym = rowH / 2
   for (const row of rows) {
-    let nodeColumn = lanes.findIndex(pending => pending === row.oid)
+    const before = [...lanes]
+    let nodeColumn = lanes.findIndex((pending) => pending === row.oid)
     if (nodeColumn === -1) {
-      lanes.push(row.oid)
-      nodeColumn = lanes.length - 1
+      // A tip whose line is already tracked joins it instead of opening a
+      // duplicate rail for the same parent.
+      const firstParent = row.parents[0]
+      const continuation = firstParent !== undefined ? lanes.findIndex((pending) => pending === firstParent) : -1
+      nodeColumn = continuation !== -1 ? continuation : claimLane(lanes, row.oid)
     }
-    const columns: LaneGlyph[] = []
-    for (let i = 0; i < lanes.length; i += 1) {
-      const pending = lanes[i]
-      if (pending === null) columns.push('gap')
-      else if (i === nodeColumn) columns.push(row.parents.length > 1 ? 'merge' : 'node')
-      else if (pending === row.oid) columns.push('gap')
-      else if (typeof pending === 'string' && later.has(pending)) columns.push('pass')
-      else columns.push('gap')
-    }
-    const parents = row.parents.filter(parent => later.has(parent))
-    const [first, ...rest] = parents
+    const [first, ...rest] = row.parents
     for (let i = 0; i < lanes.length; i += 1) {
       if (lanes[i] === row.oid && i !== nodeColumn) lanes[i] = null
     }
-    lanes[nodeColumn] = first ?? null
+    lanes[nodeColumn] = first !== undefined && inWindow.has(first) ? first : null
     for (const parent of rest) {
-      if (!lanes.includes(parent)) lanes.push(parent)
+      if (inWindow.has(parent) && !lanes.includes(parent)) claimLane(lanes, parent)
     }
     while (lanes.length > 0 && lanes[lanes.length - 1] === null) lanes.pop()
-    result.push({ columns, nodeColumn, merge: row.parents.length > 1 })
+    const after = [...lanes]
+    maxCols = Math.max(maxCols, before.length, after.length)
+    const segs: SvgGraphSeg[] = []
+    const cols = Math.max(before.length, after.length)
+    for (let col = 0; col < cols; col += 1) {
+      const above = col < before.length ? before[col] ?? null : null
+      const below = col < after.length ? after[col] ?? null : null
+      if (above !== null && below !== null) {
+        segs.push({ x1: x(col), y1: 0, x2: x(col), y2: rowH, color: col, curve: false })
+      } else if (below !== null) {
+        if (col === nodeColumn) {
+          segs.push({ x1: x(col), y1: ym, x2: x(col), y2: rowH, color: col, curve: false })
+        } else {
+          segs.push({ x1: x(nodeColumn), y1: ym, x2: x(col), y2: rowH, color: col, curve: true })
+        }
+      } else if (above !== null) {
+        if (col === nodeColumn) {
+          segs.push({ x1: x(col), y1: 0, x2: x(col), y2: ym, color: col, curve: false })
+        } else {
+          segs.push({ x1: x(col), y1: 0, x2: x(nodeColumn), y2: ym, color: col, curve: true })
+        }
+      }
+    }
+    out.push({ nodeX: x(nodeColumn), nodeY: ym, color: nodeColumn, merge: row.parents.length > 1, segs })
   }
-  return result
+  const fullWidth = Math.max(maxCols, 1) * laneW
+  if (fullWidth <= maxWidth) return { width: fullWidth, rows: out }
+  const scale = maxWidth / fullWidth
+  for (const row of out) {
+    row.nodeX *= scale
+    for (const seg of row.segs) {
+      seg.x1 *= scale
+      seg.x2 *= scale
+    }
+  }
+  return { width: maxWidth, rows: out }
 }
 
 

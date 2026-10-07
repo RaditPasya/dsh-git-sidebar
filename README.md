@@ -24,7 +24,7 @@ Branches, graph, previews, and push-state — one click from the left rail. No t
 | | |
 |---|---|
 | **Branch switcher** | Search, switch, create. `↑N ↓M` ahead/behind, `✓` in sync, `●` local-only. |
-| **Commit graph** | Topo-order lanes in living color. Click any row to expand it. |
+| **Commit graph** | SVG rails with merge curves in living color — rings for merges, branch lines that join back. Click any row to expand it. |
 | **Commit preview** | Files (`A/M/D`), `+ins −del`, message body, author, timestamp. Hover any row for the gist. |
 | **Who's who** | Every author gets their own dot color — scan a hundred commits at a glance. |
 | **Footer dock** | An always-on branch dropdown + recent commits docked above Settings. *Follows your open session*, hides on non-git workspaces. Click the header to collapse, drag (or focus and use arrow keys on) the top edge to resize — it remembers. |
