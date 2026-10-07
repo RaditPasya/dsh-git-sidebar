@@ -1,8 +1,6 @@
 
 import { subscribeSharedEvents } from './sse-leader.ts'
-import type {
-  BranchesView, CommitDetail, GitError, GitFeatureConfig, GraphView, PanelView, RepoStatus, WorktreeListView,
-} from '../core/types.ts'
+import type { CommitDetail, GitError, PanelView } from '../core/types.ts'
 
 export type ApiResult<T> =
   | { ok: true; value: T }
@@ -51,12 +49,12 @@ async function post<T>(path: string, payload: Record<string, unknown>): Promise<
 }
 
 export class GitApi {
-  status(path: string): Promise<ApiResult<RepoStatus | null>> {
-    return post('git-sidebar/status', { path })
-  }
-
-  branches(path: string): Promise<ApiResult<BranchesView | null>> {
-    return post('git-sidebar/branches', { path })
+  /**
+   * The panel is the only read path: status, branches and graph arrive in one
+   * batched host call, so there is no separate status/branches/graph request.
+   */
+  panel(path: string, limit?: number): Promise<ApiResult<PanelView | null>> {
+    return post('git-sidebar/panel', limit === undefined ? { path } : { path, limit })
   }
 
   switchBranch(path: string, branch: string): Promise<ApiResult<{ branch: string }>> {
@@ -75,32 +73,8 @@ export class GitApi {
     return post('git-sidebar/fetch', { path })
   }
 
-  graph(path: string, limit?: number): Promise<ApiResult<GraphView | null>> {
-    return post('git-sidebar/graph', limit === undefined ? { path } : { path, limit })
-  }
-
-  panel(path: string, limit?: number): Promise<ApiResult<PanelView | null>> {
-    return post('git-sidebar/panel', limit === undefined ? { path } : { path, limit })
-  }
-
   commit(path: string, oid: string): Promise<ApiResult<CommitDetail | null>> {
     return post('git-sidebar/commit', { path, oid })
-  }
-
-  worktrees(path: string): Promise<ApiResult<WorktreeListView | null>> {
-    return post('git-sidebar/worktrees', { path })
-  }
-
-  addWorktree(path: string, name: string, baseRef?: string): Promise<ApiResult<{ path: string; branch: string; name: string }>> {
-    return post('git-sidebar/worktree-add', baseRef === undefined ? { path, name } : { path, name, baseRef })
-  }
-
-  removeWorktree(path: string, worktreePath: string, opts?: { force?: boolean; deleteBranch?: boolean }): Promise<ApiResult<{ removed: true }>> {
-    return post('git-sidebar/worktree-remove', { path, worktreePath, force: opts?.force === true, deleteBranch: opts?.deleteBranch === true })
-  }
-
-  config(): Promise<ApiResult<GitFeatureConfig>> {
-    return post('git-sidebar/config', {})
   }
 }
 

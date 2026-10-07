@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { PropsLocale, PropsRuntime, Translate } from '@deepseek-ai/dsh-client-ui-slots'
+import type { CSSProperties } from 'react'
+import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { computeLanes, type CommitDetail } from '../../core/types.ts'
 import { sharedGitApi } from './shared.tsx'
 import {
@@ -16,13 +17,13 @@ import {
   useFollowedWorkspacePath,
   useGitSnapshot,
   useWorkspaceRefs,
+  type GitLocaleProps,
 } from './shared.tsx'
-import type { GitSidebarKey } from './locales.ts'
 
-export type GitPanelProps = PropsRuntime<'main'> & PropsLocale<GitSidebarKey>
+export type GitPanelProps = PropsRuntime<'main'> & GitLocaleProps
 
 export function GitPanel(props: GitPanelProps) {
-  const t = (props as unknown as { t: Translate<GitSidebarKey> }).t
+  const t = props.t
   const workspaces = useWorkspaceRefs(props)
   const followedPath = useFollowedWorkspacePath(props, workspaces)
   const [path, setPath] = useState<string>('')
@@ -33,6 +34,7 @@ export function GitPanel(props: GitPanelProps) {
   const [flashBranch, setFlashBranch] = useState<string | null>(null)
   const [selectedOid, setSelectedOid] = useState<string | null>(null)
   const [detail, setDetail] = useState<CommitDetail | null | undefined>(undefined)
+  const [localError, setLocalError] = useState<string | null>(null)
   const detailReq = useRef<string | null>(null)
   const detailPath = useRef<string>('')
   const flashTimer = useRef<number | undefined>(undefined)
@@ -57,7 +59,6 @@ export function GitPanel(props: GitPanelProps) {
   }, [path])
 
   const { status, branches, graph, error, loading, refresh } = useGitSnapshot(path, t, 200)
-  const [localError, setLocalError] = useState<string | null>(null)
   const shownError = localError ?? error
 
   const filteredBranches = useMemo(() => {
@@ -135,8 +136,8 @@ export function GitPanel(props: GitPanelProps) {
           className="gs-btn"
           style={styles.refresh}
           onClick={() => void refresh(path)}
-          aria-label={t('panel.refresh') ?? 'Refresh'}
-          title={t('panel.refresh') ?? 'Refresh'}
+          aria-label={t('panel.refresh')}
+          title={t('panel.refresh')}
         >
           ⟳
         </button>
@@ -240,7 +241,7 @@ export function GitPanel(props: GitPanelProps) {
                 <div
                   key={c.oid}
                   style={styles.commitRow}
-                  className={open ? 'gs-flash' : undefined}
+                  className={`gs-virtual-row${open ? ' gs-flash' : ''}`}
                 >
                   <button
                     type="button"
@@ -316,7 +317,7 @@ export function GitPanel(props: GitPanelProps) {
   )
 }
 
-const styles: Record<string, Record<string, string | number>> = {
+const styles: Record<string, CSSProperties> = {
   page: { boxSizing: 'border-box', height: '100%', overflow: 'auto', padding: '28px clamp(24px,4vw,48px) 48px', color: 'var(--dsw-alias-label-primary)' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', maxWidth: 1100, margin: '0 auto 16px' },
   title: { fontSize: 20, fontWeight: 700 },

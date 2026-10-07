@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CommitDetail } from '../../core/types.ts'
 import { sharedGitApi } from './shared.tsx'
 import {
@@ -14,8 +15,8 @@ import {
   useFollowedWorkspacePath,
   useGitSnapshot,
   useWorkspaceRefs,
+  type GitLocaleProps,
 } from './shared.tsx'
-import type { GitSidebarKey } from './locales.ts'
 import {
   getFooterPopupSnapshot,
   subscribeFooterPopup,
@@ -26,11 +27,31 @@ export interface GitFooterActionInject {
 }
 
 export type GitFooterActionProps =
-  PropsRuntime<'sidebar.footer.action'> & PropsLocale<GitSidebarKey> & GitFooterActionInject
+  PropsRuntime<'sidebar.footer.action'> & GitLocaleProps & GitFooterActionInject
+
+const DOCK_MIN_HEIGHT = 140
+const DOCK_MAX_HEIGHT = 640
+const DOCK_KEYBOARD_STEP = 16
+const DOCK_HEIGHT_KEY = 'dsh-web-git-sidebar.dockHeight'
+const PULL_ORANGE = '#e8833c'
+
+function clampDockHeight(value: number): number {
+  return Math.min(DOCK_MAX_HEIGHT, Math.max(DOCK_MIN_HEIGHT, value))
+}
+
+function readStoredDockHeight(): number {
+  try {
+    const raw = localStorage.getItem(DOCK_HEIGHT_KEY)
+    const parsed = raw !== null ? Number(raw) : NaN
+    if (Number.isFinite(parsed)) return clampDockHeight(parsed)
+  } catch {
+    // Storage can be unavailable (private mode); fall through to the default.
+  }
+  return 320
+}
 
 export function GitFooterAction(props: GitFooterActionProps) {
-  const wide = (props as unknown as { wide?: boolean }).wide ?? false
-  const t = (props as unknown as { t: (key: string, params?: Record<string, unknown>) => string }).t
+  const { t, wide, openGit } = props
   const workspaces = useWorkspaceRefs(props)
   const firstPath = useFollowedWorkspacePath(props, workspaces)
   const followedName = workspaces.find((w) => w.path === firstPath)?.name ?? ''
@@ -53,19 +74,14 @@ export function GitFooterAction(props: GitFooterActionProps) {
   const [fetching, setFetching] = useState(false)
   const [toast, setToast] = useState<{ text: string; tone: 'ok' | 'info' | 'error' } | null>(null)
 
-  const [dockHeight, setDockHeight] = useState<number>(() => {
-    try {
-      const raw = localStorage.getItem('dsh-web-git-sidebar.dockHeight')
-      const parsed = raw !== null ? Number(raw) : NaN
-      if (Number.isFinite(parsed)) return Math.min(640, Math.max(140, parsed))
-    } catch {
-    }
-    return 320
-  })
+  const [dockHeight, setDockHeight] = useState<number>(readStoredDockHeight)
   const detailReq = useRef<string | null>(null)
   const detailPath = useRef<string>('')
   const dragStart = useRef<{ y: number; height: number } | null>(null)
   const toastTimer = useRef<number | undefined>(undefined)
+  const dockRef = useRef<HTMLDivElement | null>(null)
+  const pickerRef = useRef<HTMLDivElement | null>(null)
+  const branchButtonRef = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     ensureSidebarStyles()
@@ -88,21 +104,62 @@ export function GitFooterAction(props: GitFooterActionProps) {
 
   useEffect(() => {
     try {
-      localStorage.setItem('dsh-web-git-sidebar.dockHeight', String(dockHeight))
+      localStorage.setItem(DOCK_HEIGHT_KEY, String(dockHeight))
     } catch {
+      // Persisting the dock height is best-effort.
     }
   }, [dockHeight])
 
+  // Close the picker on Escape (restoring focus) or on a click outside the dock.
   useEffect(() => {
     if (!pickerOpen) return undefined
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setPickerOpen(false)
+      if (e.key !== 'Escape') return
+      setPickerOpen(false)
+      branchButtonRef.current?.focus()
+    }
+    const onPointerDown = (e: PointerEvent): void => {
+      const root = dockRef.current
+      if (root !== null && e.target instanceof Node && root.contains(e.target)) return
+      setPickerOpen(false)
     }
     window.addEventListener('keydown', onKey)
+    window.addEventListener('pointerdown', onPointerDown)
     return () => {
       window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onPointerDown)
     }
   }, [pickerOpen])
+
+  // Opening the picker moves focus into it so the list is keyboard-navigable.
+  useEffect(() => {
+    if (!pickerOpen) return
+    pickerRef.current?.querySelector<HTMLButtonElement>('[role="option"]')?.focus()
+  }, [pickerOpen])
+
+  const onPickerKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return
+    const options = Array.from(pickerRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? [])
+    if (options.length === 0) return
+    e.preventDefault()
+    const active = options.indexOf(document.activeElement as HTMLButtonElement)
+    const next = e.key === 'Home'
+      ? 0
+      : e.key === 'End'
+        ? options.length - 1
+        : e.key === 'ArrowDown'
+          ? (active < 0 ? 0 : (active + 1) % options.length)
+          : (active <= 0 ? options.length - 1 : active - 1)
+    options[next]?.focus()
+  }
+
+  const showToast = (text: string, tone: 'ok' | 'info' | 'error'): void => {
+    window.clearTimeout(toastTimer.current)
+    setToast({ text, tone })
+    toastTimer.current = window.setTimeout(() => {
+      setToast(null)
+    }, 2600)
+  }
 
   if (firstPath === '') return null
 
@@ -128,23 +185,11 @@ export function GitFooterAction(props: GitFooterActionProps) {
     return (
       <button
         type="button"
-        onClick={() => { props.openGit() }}
+        onClick={() => { openGit() }}
         title={stateLabel}
         aria-label={stateLabel}
         className="gs-btn"
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          background: 'transparent',
-          color: 'inherit',
-          border: 0,
-          cursor: 'pointer',
-          padding: 6,
-          borderRadius: 6,
-          fontSize: 13,
-          maxWidth: '100%',
-        }}
+        style={iconOnlyButton}
       >
         <svg width={16} height={16} viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <circle cx="4.5" cy="4" r="2" stroke="currentColor" strokeWidth="1.4" />
@@ -164,9 +209,10 @@ export function GitFooterAction(props: GitFooterActionProps) {
   }
 
   const list = branches?.branches ?? []
-  const currentName = list.find((b) => b.current)?.name ?? (status.branch !== '' ? status.branch : '')
-  const currentUpstream = list.find((b) => b.current)?.upstream ?? ''
-  const currentBehind = list.find((b) => b.current)?.behind ?? 0
+  const current = list.find((b) => b.current)
+  const currentName = current?.name ?? (status.branch !== '' ? status.branch : '')
+  const currentUpstream = current?.upstream ?? ''
+  const currentBehind = current?.behind ?? 0
   const branchName = currentName !== '' ? currentName : label
   const branchTitle = conflicted ? `${branchName} · ${t('dock.stateConflict')}` : (dirty ? `${branchName} · ${t('dock.stateDirty')}` : branchName)
   const pullColor = pullTone === 'failed'
@@ -177,15 +223,6 @@ export function GitFooterAction(props: GitFooterActionProps) {
         ? token.success
         : token.labelSecondary
   const needsPull = currentBehind > 0
-
-
-  const showToast = (text: string, tone: 'ok' | 'info' | 'error'): void => {
-    window.clearTimeout(toastTimer.current)
-    setToast({ text, tone })
-    toastTimer.current = window.setTimeout(() => {
-      setToast(null)
-    }, 2600)
-  }
 
   const switchTo = async (branch: string) => {
     if (firstPath === '' || busy !== null) return
@@ -217,12 +254,14 @@ export function GitFooterAction(props: GitFooterActionProps) {
           showToast(result.error.message, 'error')
           return
         }
-        const entry = await refresh(firstPath)
-        if (entry === null) {
+        const outcome = await refresh(firstPath)
+        if (outcome.kind === 'failed') {
           showToast(t('panel.requestFailed'), 'error')
           return
         }
-        const behind = entry.branches?.branches.find((b) => b.current)?.behind ?? 0
+        // A superseded load is not a failure; a newer request already owns the data.
+        if (outcome.kind === 'superseded') return
+        const behind = outcome.entry.branches?.branches.find((b) => b.current)?.behind ?? 0
         showToast(behind > 0 ? t('dock.behind', { count: behind }) : t('dock.noUpstreamChanges'), behind > 0 ? 'info' : 'ok')
         return
       } finally {
@@ -242,7 +281,11 @@ export function GitFooterAction(props: GitFooterActionProps) {
         return
       }
       setPullTone(null)
-      await refresh(firstPath)
+      const outcome = await refresh(firstPath)
+      if (outcome.kind === 'failed') {
+        showToast(t('panel.requestFailed'), 'error')
+        return
+      }
       showToast(before > 0 ? t('dock.pulled', { count: before }) : t('dock.upToDate'), 'ok')
     } finally {
       setPulling(false)
@@ -267,24 +310,29 @@ export function GitFooterAction(props: GitFooterActionProps) {
 
   return (
     <div
+      ref={dockRef}
       data-dsh-plugin="dsh-web-git-sidebar"
       data-dsh-part="footer-dock"
       className="gs-dock"
-      style={{
-        width: '100%',
-        minWidth: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'transparent',
-        color: 'var(--dsw-alias-label-primary, #e8eaed)',
-        borderTop: `1px solid ${token.border}`,
-        position: 'relative',
-      }}
+      style={dockRoot}
     >
       <div
         role="separator"
         aria-orientation="horizontal"
-        aria-hidden="true"
+        aria-label={t('dock.resize')}
+        aria-valuemin={DOCK_MIN_HEIGHT}
+        aria-valuemax={DOCK_MAX_HEIGHT}
+        aria-valuenow={Math.round(dockHeight)}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowUp') {
+            e.preventDefault()
+            setDockHeight((value) => clampDockHeight(value + DOCK_KEYBOARD_STEP))
+          } else if (e.key === 'ArrowDown') {
+            e.preventDefault()
+            setDockHeight((value) => clampDockHeight(value - DOCK_KEYBOARD_STEP))
+          }
+        }}
         onPointerDown={(e) => {
           dragStart.current = { y: e.clientY, height: dockHeight }
           e.currentTarget.setPointerCapture(e.pointerId)
@@ -292,40 +340,46 @@ export function GitFooterAction(props: GitFooterActionProps) {
         onPointerMove={(e) => {
           const start = dragStart.current
           if (start === null) return
-          setDockHeight(Math.min(640, Math.max(140, start.height + (start.y - e.clientY))))
+          setDockHeight(clampDockHeight(start.height + (start.y - e.clientY)))
         }}
         onPointerUp={() => { dragStart.current = null }}
         onPointerCancel={() => { dragStart.current = null }}
-        style={{ height: 6, cursor: 'ns-resize', touchAction: 'none', flex: 'none' }}
+        style={resizeHandle}
       />
-      <div
-        className="gs-btn"
-        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: 8 }}
-      >
+      <div style={dockHeader}>
+        {/*
+          The chevron and the repo name are one disclosure control, so the whole
+          label area toggles the dock — not just the 12px glyph. They cannot be
+          two nested buttons, hence a single button carrying both.
+        */}
         <button
           type="button"
           onClick={() => { setCollapsed((v) => !v) }}
           className="gs-btn"
-          style={chevronButton}
+          style={dockToggle}
           aria-expanded={!collapsed}
-          aria-label={collapsed ? t('popup.title') : t('popup.close')}
-          title={collapsed ? label : t('popup.close')}
+          title={firstPath}
         >
-          <span aria-hidden="true" style={{ fontSize: 12, lineHeight: 1, opacity: 0.8, display: 'inline-block', transition: 'transform 180ms ease-out', transform: collapsed ? 'rotate(-90deg)' : 'none' }}>
+          <span
+            aria-hidden="true"
+            style={collapsed ? { ...chevronGlyph, transform: 'rotate(-90deg)' } : chevronGlyph}
+          >
             {'▾'}
           </span>
+          <span style={dockTitleText}>
+            {followedName !== '' ? followedName.split('/').filter(Boolean).pop() ?? followedName : t('popup.title')}
+          </span>
         </button>
-        <strong style={{ flex: 1, minWidth: 0, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={firstPath}>
-          {followedName !== '' ? followedName.split('/').filter(Boolean).pop() ?? followedName : t('popup.title')}
-        </strong>
         {conflicted && <span aria-hidden="true" style={{ color: token.error, fontSize: 12 }}>⚠</span>}
         {!collapsed && (
           <button
+            ref={branchButtonRef}
             type="button"
             onClick={() => { setPickerOpen((v) => !v) }}
             className="gs-btn"
             style={branchButton}
             title={branchTitle}
+            aria-label={branchTitle}
             aria-expanded={pickerOpen}
             aria-haspopup="listbox"
           >
@@ -347,7 +401,7 @@ export function GitFooterAction(props: GitFooterActionProps) {
             <svg width={14} height={14} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={(pulling || fetching) ? 'gs-dirty-dot' : undefined} style={{ display: needsPull ? undefined : 'none' }}>
               <path d="M7 1.8v7.2M4.3 6.4 7 9.2l2.7-2.8M2.5 11.8h9" />
             </svg>
-            <svg width={14} height={14} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={(pulling || fetching) ? 'gs-dirty-dot' : undefined} style={{ display: needsPull ? 'none' : undefined }}>
+            <svg width={14} height={14} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={(pulling || fetching) ? 'gs-spin' : undefined} style={{ display: needsPull ? 'none' : undefined }}>
               <path d="M12 7A5 5 0 1 1 7 2c1.8 0 3.4.9 4.3 2.3M11.5 1.5v3h-3" />
             </svg>
           </button>
@@ -355,7 +409,7 @@ export function GitFooterAction(props: GitFooterActionProps) {
         {!collapsed && (
           <button
             type="button"
-            onClick={() => { props.openGit() }}
+            onClick={() => { openGit() }}
             className="gs-btn"
             style={iconButton}
             title={t('popup.openFull')}
@@ -373,16 +427,22 @@ export function GitFooterAction(props: GitFooterActionProps) {
         </div>
       )}
       {pickerOpen && !collapsed && (
-        <div role="listbox" aria-label={t('panel.branches')} style={pickerStyle}>
+        <div
+          ref={pickerRef}
+          role="listbox"
+          aria-label={t('panel.branches')}
+          onKeyDown={onPickerKeyDown}
+          style={pickerStyle}
+        >
           <div style={sectionTitle}>{t('panel.branches')}</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 200, overflow: 'auto' }}>
+          <div style={pickerScroll}>
             {loading && <SkeletonRows rows={3} />}
             {!loading && list.map((b) => {
-              const a = b.ahead ?? 0
-              const d = b.behind ?? 0
+              const ahead = b.ahead ?? 0
+              const behind = b.behind ?? 0
               const suffix = (b.upstream === undefined || b.upstream === '' || b.gone === true)
                 ? ` · ${(b.gone === true ? t('panel.upstreamGone') : t('panel.localOnly'))}`
-                : (a === 0 && d === 0 ? '' : ` · ↑${a} ↓${d}`)
+                : (ahead === 0 && behind === 0 ? '' : ` · ↑${ahead} ↓${behind}`)
               return (
                 <button
                   key={b.name}
@@ -407,7 +467,7 @@ export function GitFooterAction(props: GitFooterActionProps) {
       )}
       <div className={`gs-expand${collapsed ? ' gs-collapsed' : ''}`} aria-hidden={collapsed}>
         <div>
-          <div style={{ overflow: 'auto', padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: 10, height: dockHeight, minHeight: 0 }}>
+          <div style={{ ...dockBody, height: dockHeight }}>
           {(localError ?? error) !== null && <div style={{ color: token.error, fontSize: 12 }}>{localError ?? error}</div>}
           {navError !== null && <div style={{ color: token.error, fontSize: 12 }}>{t('popup.navFailed')}: {navError}</div>}
 
@@ -418,7 +478,7 @@ export function GitFooterAction(props: GitFooterActionProps) {
               {!loading && (graph?.commits ?? []).slice(0, 30).map((c) => {
                 const loaded = detailOid === c.oid && detail !== undefined && detail !== null && detail.oid === c.oid
                 return (
-                  <div key={c.oid} style={{ borderBottom: `1px solid ${token.border}`, padding: '5px 0' }}>
+                  <div key={c.oid} className="gs-virtual-row" style={commitRow}>
                     <button
                       type="button"
                       onClick={() => void openCommit(c.oid)}
@@ -434,14 +494,14 @@ export function GitFooterAction(props: GitFooterActionProps) {
                         {c.subject}
                       </span>
                     </button>
-                    <div style={{ fontSize: 11, color: token.labelSecondary, marginLeft: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={commitMeta}>
                       <AuthorTag name={c.author} />
                       <span>· {formatRelativeTime(t, c.authorTime)}</span>
                     </div>
                     <div className={`gs-expand${detailOid === c.oid ? '' : ' gs-collapsed'}`} aria-hidden={detailOid !== c.oid}>
                       <div>
                         {detailOid === c.oid && (
-                          <div style={{ margin: '4px 0 4px 2px', fontSize: 12 }}>
+                          <div style={commitDetail}>
                             {detail === undefined && <div>{t('panel.loadingCommit')}</div>}
                             {detail === null && <div>{t('panel.commitFailed')}</div>}
                             {detail !== undefined && detail !== null && (
@@ -458,7 +518,7 @@ export function GitFooterAction(props: GitFooterActionProps) {
                                   <span style={{ color: token.error }}>−{detail.deletions}</span>
                                 </div>
                                 {detail.files.slice(0, 8).map((f) => (
-                                  <div key={f.path} style={{ display: 'flex', gap: 6, padding: '1px 0' }}>
+                                  <div key={f.path} style={detailFileRow}>
                                     <span style={{ width: 14, fontWeight: 700, color: fileStatusColor(f.status) }}>{f.status}</span>
                                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.path}>{f.path}</span>
                                   </div>
@@ -482,16 +542,28 @@ export function GitFooterAction(props: GitFooterActionProps) {
   )
 }
 
-const sectionTitle: Record<string, string | number> = { fontWeight: 700, fontSize: 12, marginBottom: 6 }
-const branchButton: Record<string, string | number> = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', cursor: 'pointer', background: 'transparent', color: 'inherit', border: `1px solid ${token.border}`, borderRadius: 6, fontSize: 12, fontWeight: 700, maxWidth: '45%', minWidth: 0 }
-const pickerStyle: Record<string, string | number> = { position: 'absolute', top: 42, left: 8, right: 8, zIndex: 5, background: 'var(--dsw-specific-input-major, #131518)', border: `1px solid ${token.border}`, borderRadius: 8, boxShadow: 'var(--dsw-shadow-lv3, 0 12px 40px rgba(0,0,0,0.55))', padding: 8 }
-const pickerRow: Record<string, string | number> = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '5px 6px', cursor: 'pointer', background: 'transparent', color: 'inherit', border: '1px solid transparent', borderRadius: 6, textAlign: 'left', fontSize: 13, width: '100%', boxSizing: 'border-box' }
-const pickerRowCurrent: Record<string, string | number> = { borderColor: token.brand, fontWeight: 700, backgroundColor: token.activeBg }
-const PULL_ORANGE = '#e8833c'
-const toastStyle: Record<string, string | number> = { position: 'absolute', top: 40, left: 8, right: 8, zIndex: 6, textAlign: 'center', fontSize: 12, padding: '6px 8px', background: 'var(--dsw-specific-input-major, #131518)', color: 'var(--dsw-alias-label-primary, #e8eaed)', border: `1px solid ${token.border}`, borderRadius: 8, boxShadow: 'var(--dsw-shadow-lv3, 0 12px 40px rgba(0,0,0,0.55))', pointerEvents: 'none' }
-const emptyStyle: Record<string, string | number> = { opacity: 0.6, fontSize: 12, padding: 6 }
-const commitButton: Record<string, string | number> = { display: 'flex', gap: 6, alignItems: 'baseline', width: '100%', background: 'transparent', color: 'inherit', border: 0, cursor: 'pointer', textAlign: 'left', padding: 0, fontSize: 13, borderRadius: 4 }
-const iconButton: Record<string, string | number> = { background: 'transparent', color: 'inherit', border: 0, cursor: 'pointer', padding: 4, borderRadius: 6, display: 'inline-flex', alignItems: 'center', opacity: 0.8 }
-const chevronButton: Record<string, string | number> = { background: 'transparent', color: 'inherit', border: 0, cursor: 'pointer', fontSize: 12, padding: 2, lineHeight: 1, borderRadius: 4 }
-const slimDock: Record<string, string | number> = { width: '100%', minWidth: 0, display: 'flex', alignItems: 'center', padding: '8px 10px', color: 'var(--dsw-alias-label-primary, #e8eaed)', fontSize: 12, opacity: 0.75 }
-const slimText: Record<string, string | number> = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const sectionTitle: CSSProperties = { fontWeight: 700, fontSize: 12, marginBottom: 6 }
+const dockRoot: CSSProperties = { width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', background: 'transparent', color: 'var(--dsw-alias-label-primary, #e8eaed)', borderTop: `1px solid ${token.border}`, position: 'relative' }
+const resizeHandle: CSSProperties = { height: 6, cursor: 'ns-resize', touchAction: 'none', flex: 'none' }
+const dockHeader: CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: 8 }
+/** Chevron + name as one click target; `flex: 1` claims all the slack space. */
+const dockToggle: CSSProperties = { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', padding: 0, borderRadius: 6, textAlign: 'left', fontFamily: 'inherit', fontSize: 13, fontWeight: 700 }
+const dockTitleText: CSSProperties = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }
+const chevronGlyph: CSSProperties = { fontSize: 12, lineHeight: 1, opacity: 0.8, display: 'inline-block', flex: 'none', transition: 'transform 180ms ease-out' }
+const dockBody: CSSProperties = { overflow: 'auto', padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }
+const branchButton: CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', cursor: 'pointer', background: 'transparent', color: 'inherit', border: `1px solid ${token.border}`, borderRadius: 6, fontSize: 12, fontWeight: 700, maxWidth: '45%', minWidth: 0 }
+const pickerStyle: CSSProperties = { position: 'absolute', top: 42, left: 8, right: 8, zIndex: 5, background: 'var(--dsw-specific-input-major, #131518)', border: `1px solid ${token.border}`, borderRadius: 8, boxShadow: 'var(--dsw-shadow-lv3, 0 12px 40px rgba(0,0,0,0.55))', padding: 8 }
+const pickerScroll: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 200, overflow: 'auto' }
+const pickerRow: CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '5px 6px', cursor: 'pointer', background: 'transparent', color: 'inherit', border: '1px solid transparent', borderRadius: 6, textAlign: 'left', fontSize: 13, width: '100%', boxSizing: 'border-box' }
+const pickerRowCurrent: CSSProperties = { borderColor: token.brand, fontWeight: 700, backgroundColor: token.activeBg }
+const toastStyle: CSSProperties = { position: 'absolute', top: 40, left: 8, right: 8, zIndex: 6, textAlign: 'center', fontSize: 12, padding: '6px 8px', background: 'var(--dsw-specific-input-major, #131518)', color: 'var(--dsw-alias-label-primary, #e8eaed)', border: `1px solid ${token.border}`, borderRadius: 8, boxShadow: 'var(--dsw-shadow-lv3, 0 12px 40px rgba(0,0,0,0.55))', pointerEvents: 'none' }
+const emptyStyle: CSSProperties = { opacity: 0.6, fontSize: 12, padding: 6 }
+const commitRow: CSSProperties = { borderBottom: `1px solid ${token.border}`, padding: '5px 0' }
+const commitMeta: CSSProperties = { fontSize: 11, color: token.labelSecondary, marginLeft: 2, display: 'flex', alignItems: 'center', gap: 4 }
+const commitDetail: CSSProperties = { margin: '4px 0 4px 2px', fontSize: 12 }
+const detailFileRow: CSSProperties = { display: 'flex', gap: 6, padding: '1px 0' }
+const commitButton: CSSProperties = { display: 'flex', gap: 6, alignItems: 'baseline', width: '100%', background: 'transparent', color: 'inherit', border: 0, cursor: 'pointer', textAlign: 'left', padding: 0, fontSize: 13, borderRadius: 4 }
+const iconButton: CSSProperties = { background: 'transparent', color: 'inherit', border: 0, cursor: 'pointer', padding: 4, borderRadius: 6, display: 'inline-flex', alignItems: 'center', opacity: 0.8 }
+const slimDock: CSSProperties = { width: '100%', minWidth: 0, display: 'flex', alignItems: 'center', padding: '8px 10px', color: 'var(--dsw-alias-label-primary, #e8eaed)', fontSize: 12, opacity: 0.75 }
+const slimText: CSSProperties = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const iconOnlyButton: CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', color: 'inherit', border: 0, cursor: 'pointer', padding: 6, borderRadius: 6, fontSize: 13, maxWidth: '100%' }
