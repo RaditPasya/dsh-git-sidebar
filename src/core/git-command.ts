@@ -221,3 +221,7 @@ export function validateBranchName(name: string): string | null {
   if (name.length > 1000) return 'too-long'
   return null
 }
+
+export function isUnsafeRefValue(value: string): boolean {
+  return value.startsWith('-') || value.includes('\0') || value.includes('\n')
+}

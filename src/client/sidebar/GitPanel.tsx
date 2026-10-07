@@ -34,6 +34,7 @@ export function GitPanel(props: GitPanelProps) {
   const [selectedOid, setSelectedOid] = useState<string | null>(null)
   const [detail, setDetail] = useState<CommitDetail | null | undefined>(undefined)
   const detailReq = useRef<string | null>(null)
+  const detailPath = useRef<string>('')
   const flashTimer = useRef<number | undefined>(undefined)
 
   useEffect(() => {
@@ -46,6 +47,14 @@ export function GitPanel(props: GitPanelProps) {
   useEffect(() => {
     if (!manualPick && followedPath !== '' && path === '') setPath(followedPath)
   }, [workspaces, path, followedPath, manualPick])
+
+  useEffect(() => {
+    detailReq.current = null
+    detailPath.current = ''
+    setSelectedOid(null)
+    setDetail(undefined)
+    setLocalError(null)
+  }, [path])
 
   const { status, branches, graph, error, loading, refresh } = useGitSnapshot(path, t, 200)
   const [localError, setLocalError] = useState<string | null>(null)
@@ -64,32 +73,38 @@ export function GitPanel(props: GitPanelProps) {
     if (path === '' || busy !== null) return
     setBusy(branch)
     setLocalError(null)
-    const result = await sharedGitApi.switchBranch(path, branch)
-    setBusy(null)
-    if (!result.ok) {
-      setLocalError(result.error.message)
-      return
+    try {
+      const result = await sharedGitApi.switchBranch(path, branch)
+      if (!result.ok) {
+        setLocalError(result.error.message)
+        return
+      }
+      setFlashBranch(branch)
+      window.clearTimeout(flashTimer.current)
+      flashTimer.current = window.setTimeout(() => {
+        setFlashBranch((current) => (current === branch ? null : current))
+      }, 950)
+      await refresh(path)
+    } finally {
+      setBusy(null)
     }
-    setFlashBranch(branch)
-    window.clearTimeout(flashTimer.current)
-    flashTimer.current = window.setTimeout(() => {
-      setFlashBranch((current) => (current === branch ? null : current))
-    }, 950)
-    await refresh(path)
   }, [path, busy, refresh])
 
   const createBranch = useCallback(async () => {
     const name = newBranch.trim()
     if (path === '' || name === '' || busy !== null) return
     setBusy(`create:${name}`)
-    const result = await sharedGitApi.createBranch(path, name)
-    setBusy(null)
-    if (!result.ok) {
-      setLocalError(result.error.message)
-      return
+    try {
+      const result = await sharedGitApi.createBranch(path, name)
+      if (!result.ok) {
+        setLocalError(result.error.message)
+        return
+      }
+      setNewBranch('')
+      await refresh(path)
+    } finally {
+      setBusy(null)
     }
-    setNewBranch('')
-    await refresh(path)
   }, [path, newBranch, busy, refresh])
 
   const openCommit = useCallback(async (oid: string) => {
@@ -98,11 +113,13 @@ export function GitPanel(props: GitPanelProps) {
       setSelectedOid(null)
       return
     }
+    const requestPath = path
     detailReq.current = oid
+    detailPath.current = requestPath
     setSelectedOid(oid)
     setDetail(undefined)
-    const result = await sharedGitApi.commit(path, oid)
-    if (detailReq.current !== oid) return
+    const result = await sharedGitApi.commit(requestPath, oid)
+    if (detailReq.current !== oid || detailPath.current !== requestPath) return
     setDetail(result.ok ? result.value : null)
   }, [path, selectedOid])
 
@@ -133,6 +150,18 @@ export function GitPanel(props: GitPanelProps) {
           ))}
         </select>
       </label>
+      {manualPick && followedPath !== '' && followedPath !== path && (
+        <div style={styles.followRow}>
+          <button
+            type="button"
+            onClick={() => { setManualPick(false); setPath(followedPath) }}
+            className="gs-btn"
+            style={styles.followButton}
+          >
+            {t('panel.follow')}
+          </button>
+        </div>
+      )}
 
       {status !== undefined && status !== null && (
         <div style={styles.statusLine}>
@@ -146,7 +175,7 @@ export function GitPanel(props: GitPanelProps) {
       {workspaces.length === 0 && path === '' && (
         <div style={styles.empty}>{t('panel.noWorkspace')}</div>
       )}
-      {loading && status === undefined && workspaces.length > 0 && (
+      {loading && status === undefined && path !== '' && (
         <div style={{ ...styles.statusLine, maxWidth: 1100 }}>
           <SkeletonRows rows={1} height={16} />
         </div>
@@ -163,7 +192,7 @@ export function GitPanel(props: GitPanelProps) {
             style={styles.input}
           />
           <div style={styles.branchList}>
-            {loading && workspaces.length > 0 && <SkeletonRows rows={6} />}
+            {loading && path !== '' && <SkeletonRows rows={6} />}
             {!loading && filteredBranches.map((b, index) => (
               <button
                 key={b.name}
@@ -179,7 +208,7 @@ export function GitPanel(props: GitPanelProps) {
                 title={b.upstream ?? b.name}
               >
                 <span>{b.current ? '✓ ' : ''}{b.name}</span>
-                <TrackingBadge upstream={b.upstream} ahead={b.ahead} behind={b.behind} t={t} />
+                <TrackingBadge upstream={b.upstream} ahead={b.ahead} behind={b.behind} gone={b.gone} t={t} />
               </button>
             ))}
             {!loading && filteredBranches.length === 0 && <div style={styles.empty}>{t('panel.noBranches')}</div>}
@@ -202,7 +231,7 @@ export function GitPanel(props: GitPanelProps) {
             {t('panel.commits', { count: graph?.commits.length ?? 0 })}
           </div>
           <div style={styles.commitList}>
-            {loading && workspaces.length > 0 && <SkeletonRows rows={8} height={34} />}
+            {loading && path !== '' && <SkeletonRows rows={8} height={34} />}
             {!loading && (graph?.commits ?? []).map((c, i) => {
               const row = lanes[i]
               const open = selectedOid === c.oid
@@ -295,6 +324,8 @@ const styles: Record<string, Record<string, string | number>> = {
   refresh: { fontSize: 16, padding: '6px 10px', cursor: 'pointer', background: 'transparent', color: 'inherit', border: `1px solid ${token.border}`, borderRadius: 6 },
   label: { display: 'block', maxWidth: 1100, margin: '0 auto 12px', fontSize: 13 },
   select: { display: 'block', width: '100%', marginTop: 6, padding: 8, background: 'var(--dsw-specific-input-major, #131518)', color: 'var(--dsw-alias-label-primary, #e8eaed)', border: `1px solid ${token.border}`, borderRadius: 6 },
+  followRow: { maxWidth: 1100, margin: '0 auto 12px' },
+  followButton: { padding: '6px 10px', cursor: 'pointer', background: 'transparent', color: 'inherit', border: `1px solid ${token.border}`, borderRadius: 6, fontSize: 12, opacity: 0.85 },
   statusLine: { maxWidth: 1100, margin: '0 auto 12px', display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 13, flexWrap: 'wrap' },
   error: { maxWidth: 1100, margin: '0 auto 12px', color: token.error, fontSize: 13 },
   columns: { display: 'grid', gridTemplateColumns: 'minmax(260px,340px) 1fr', gap: 16, maxWidth: 1100, margin: '0 auto' },

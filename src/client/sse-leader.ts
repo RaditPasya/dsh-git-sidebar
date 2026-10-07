@@ -75,9 +75,9 @@ function createRelay(key: string, url: string, eventName: string, seams: SseRela
     listeners,
     destroy() {
       channel.close()
+      source?.close()
       abort.abort()
       release?.()
-      source?.close()
     },
   }
 }

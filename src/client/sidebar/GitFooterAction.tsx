@@ -47,6 +47,12 @@ export function GitFooterAction(props: GitFooterActionProps) {
   const [detailOid, setDetailOid] = useState<string | null>(null)
   const [detail, setDetail] = useState<CommitDetail | null | undefined>(undefined)
   const [collapsed, setCollapsed] = useState(false)
+  const [pulling, setPulling] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pullTone, setPullTone] = useState<'conflict' | 'failed' | null>(null)
+  const [fetching, setFetching] = useState(false)
+  const [toast, setToast] = useState<{ text: string; tone: 'ok' | 'info' | 'error' } | null>(null)
+
   const [dockHeight, setDockHeight] = useState<number>(() => {
     try {
       const raw = localStorage.getItem('dsh-web-git-sidebar.dockHeight')
@@ -57,17 +63,27 @@ export function GitFooterAction(props: GitFooterActionProps) {
     return 320
   })
   const detailReq = useRef<string | null>(null)
+  const detailPath = useRef<string>('')
   const dragStart = useRef<{ y: number; height: number } | null>(null)
+  const toastTimer = useRef<number | undefined>(undefined)
 
   useEffect(() => {
     ensureSidebarStyles()
+    return () => {
+      window.clearTimeout(toastTimer.current)
+    }
   }, [])
 
   useEffect(() => {
     detailReq.current = null
+    detailPath.current = ''
     setDetailOid(null)
     setDetail(undefined)
     setLocalError(null)
+    setPickerOpen(false)
+    setPullTone(null)
+    window.clearTimeout(toastTimer.current)
+    setToast(null)
   }, [firstPath])
 
   useEffect(() => {
@@ -77,20 +93,44 @@ export function GitFooterAction(props: GitFooterActionProps) {
     }
   }, [dockHeight])
 
-  if (firstPath === '') return null
-  if (status === undefined || status === null) return null
+  useEffect(() => {
+    if (!pickerOpen) return undefined
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setPickerOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [pickerOpen])
 
-  const label = status.branch !== '' ? status.branch : (status.head !== '' ? status.head : t('panel'))
-  const dirty = status.dirtyFiles + status.untrackedFiles > 0
-  const conflicted = status.conflicts > 0
+  if (firstPath === '') return null
+
+  const label = status !== undefined && status !== null && status.branch !== '' ? status.branch : (status !== undefined && status !== null && status.head !== '' ? status.head : t('panel'))
+  const dirty = (status?.dirtyFiles ?? 0) + (status?.untrackedFiles ?? 0) > 0
+  const conflicted = (status?.conflicts ?? 0) > 0
+  const stateLabel = conflicted ? `${label}, ${t('dock.stateConflict')}` : (dirty ? `${label}, ${t('dock.stateDirty')}` : label)
+
+  if (status === undefined || status === null) {
+    return (
+      <div
+        data-dsh-plugin="dsh-web-git-sidebar"
+        data-dsh-part="footer-dock"
+        style={slimDock}
+      >
+        {status === undefined && <SkeletonRows rows={1} height={16} />}
+        {status === null && <span style={slimText}>{t('panel.notARepo')}</span>}
+      </div>
+    )
+  }
 
   if (!wide) {
     return (
       <button
         type="button"
         onClick={() => { props.openGit() }}
-        title={label}
-        aria-label={label}
+        title={stateLabel}
+        aria-label={stateLabel}
         className="gs-btn"
         style={{
           display: 'inline-flex',
@@ -125,18 +165,88 @@ export function GitFooterAction(props: GitFooterActionProps) {
 
   const list = branches?.branches ?? []
   const currentName = list.find((b) => b.current)?.name ?? (status.branch !== '' ? status.branch : '')
+  const currentUpstream = list.find((b) => b.current)?.upstream ?? ''
+  const currentBehind = list.find((b) => b.current)?.behind ?? 0
+  const branchName = currentName !== '' ? currentName : label
+  const branchTitle = conflicted ? `${branchName} · ${t('dock.stateConflict')}` : (dirty ? `${branchName} · ${t('dock.stateDirty')}` : branchName)
+  const pullColor = pullTone === 'failed'
+    ? token.error
+    : pullTone === 'conflict'
+      ? PULL_ORANGE
+      : currentBehind > 0
+        ? token.success
+        : token.labelSecondary
+  const needsPull = currentBehind > 0
+
+
+  const showToast = (text: string, tone: 'ok' | 'info' | 'error'): void => {
+    window.clearTimeout(toastTimer.current)
+    setToast({ text, tone })
+    toastTimer.current = window.setTimeout(() => {
+      setToast(null)
+    }, 2600)
+  }
 
   const switchTo = async (branch: string) => {
     if (firstPath === '' || busy !== null) return
     setBusy(branch)
     setLocalError(null)
-    const result = await sharedGitApi.switchBranch(firstPath, branch)
-    setBusy(null)
-    if (!result.ok) {
-      setLocalError(result.error.message)
-      return
+    try {
+      const result = await sharedGitApi.switchBranch(firstPath, branch)
+      if (!result.ok) {
+        setLocalError(result.error.message)
+        return
+      }
+      setPickerOpen(false)
+      setPullTone(null)
+      await refresh(firstPath)
+    } finally {
+      setBusy(null)
     }
-    await refresh(firstPath)
+  }
+
+  const syncNow = async () => {
+    if (firstPath === '' || busy !== null || pulling || fetching) return
+    if (!needsPull) {
+      setFetching(true)
+      setLocalError(null)
+      try {
+        const result = await sharedGitApi.fetch(firstPath)
+        if (!result.ok) {
+          setLocalError(result.error.message)
+          showToast(result.error.message, 'error')
+          return
+        }
+        const entry = await refresh(firstPath)
+        if (entry === null) {
+          showToast(t('panel.requestFailed'), 'error')
+          return
+        }
+        const behind = entry.branches?.branches.find((b) => b.current)?.behind ?? 0
+        showToast(behind > 0 ? t('dock.behind', { count: behind }) : t('dock.noUpstreamChanges'), behind > 0 ? 'info' : 'ok')
+        return
+      } finally {
+        setFetching(false)
+      }
+    }
+    setPulling(true)
+    setLocalError(null)
+    const before = currentBehind
+    try {
+      const result = await sharedGitApi.pull(firstPath)
+      if (!result.ok) {
+        const message = result.error.message
+        setLocalError(message)
+        setPullTone(/conflict|fast-forward|diverge|overwrit|stash/i.test(message) ? 'conflict' : 'failed')
+        showToast(message, 'error')
+        return
+      }
+      setPullTone(null)
+      await refresh(firstPath)
+      showToast(before > 0 ? t('dock.pulled', { count: before }) : t('dock.upToDate'), 'ok')
+    } finally {
+      setPulling(false)
+    }
   }
 
   const openCommit = async (oid: string) => {
@@ -145,11 +255,13 @@ export function GitFooterAction(props: GitFooterActionProps) {
       setDetailOid(null)
       return
     }
+    const requestPath = firstPath
     detailReq.current = oid
+    detailPath.current = requestPath
     setDetailOid(oid)
     setDetail(undefined)
-    const result = await sharedGitApi.commit(firstPath, oid)
-    if (detailReq.current !== oid) return
+    const result = await sharedGitApi.commit(requestPath, oid)
+    if (detailReq.current !== oid || detailPath.current !== requestPath) return
     setDetail(result.ok ? result.value : null)
   }
 
@@ -157,14 +269,16 @@ export function GitFooterAction(props: GitFooterActionProps) {
     <div
       data-dsh-plugin="dsh-web-git-sidebar"
       data-dsh-part="footer-dock"
+      className="gs-dock"
       style={{
         width: '100%',
         minWidth: 0,
         display: 'flex',
         flexDirection: 'column',
-        background: '#181b20',
+        background: 'transparent',
         color: 'var(--dsw-alias-label-primary, #e8eaed)',
         borderTop: `1px solid ${token.border}`,
+        position: 'relative',
       }}
     >
       <div
@@ -185,65 +299,117 @@ export function GitFooterAction(props: GitFooterActionProps) {
         style={{ height: 6, cursor: 'ns-resize', touchAction: 'none', flex: 'none' }}
       />
       <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? t('popup.title') : t('popup.close')}
-        title={collapsed ? label : t('popup.close')}
-        onClick={() => { setCollapsed((v) => !v) }}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setCollapsed((v) => !v) } }}
-        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', cursor: 'pointer' }}
+        className="gs-btn"
+        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: 8 }}
       >
-        <span aria-hidden="true" style={{ fontSize: 12, lineHeight: 1, opacity: 0.8, display: 'inline-block', transition: 'transform 180ms ease-out', transform: collapsed ? 'rotate(-90deg)' : 'none' }}>
-          {'▾'}
-        </span>
+        <button
+          type="button"
+          onClick={() => { setCollapsed((v) => !v) }}
+          className="gs-btn"
+          style={chevronButton}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? t('popup.title') : t('popup.close')}
+          title={collapsed ? label : t('popup.close')}
+        >
+          <span aria-hidden="true" style={{ fontSize: 12, lineHeight: 1, opacity: 0.8, display: 'inline-block', transition: 'transform 180ms ease-out', transform: collapsed ? 'rotate(-90deg)' : 'none' }}>
+            {'▾'}
+          </span>
+        </button>
         <strong style={{ flex: 1, minWidth: 0, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={firstPath}>
           {followedName !== '' ? followedName.split('/').filter(Boolean).pop() ?? followedName : t('popup.title')}
         </strong>
         {conflicted && <span aria-hidden="true" style={{ color: token.error, fontSize: 12 }}>⚠</span>}
-        {dirty && !conflicted && <span aria-hidden="true" className="gs-dirty-dot" style={{ color: token.warn, fontSize: 12 }}>●</span>}
         {!collapsed && (
-          <button type="button" onClick={(e) => { e.stopPropagation(); props.openGit() }} className="gs-btn" style={linkButton} title={t('popup.openFull')}>
-            {t('popup.openFull')}
+          <button
+            type="button"
+            onClick={() => { setPickerOpen((v) => !v) }}
+            className="gs-btn"
+            style={branchButton}
+            title={branchTitle}
+            aria-expanded={pickerOpen}
+            aria-haspopup="listbox"
+          >
+            <span className="gs-branch-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{branchName}</span>
+            <span className="gs-branch-light" aria-hidden="true" style={{ color: conflicted ? token.error : (dirty ? token.warn : token.success), fontSize: 11 }}>●</span>
+          </button>
+        )}
+        {collapsed && dirty && !conflicted && <span aria-hidden="true" className="gs-dirty-dot" style={{ color: token.warn, fontSize: 12 }}>●</span>}
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={() => { void syncNow() }}
+            disabled={pulling || fetching || busy !== null || currentUpstream === ''}
+            className="gs-btn"
+            style={{ ...iconButton, color: needsPull ? pullColor : token.labelSecondary }}
+            title={fetching ? t('dock.fetching') : (pulling ? t('dock.pulling') : (currentUpstream === '' ? t('panel.noUpstream') : (needsPull ? t('dock.pull') : t('dock.fetch'))))}
+            aria-label={needsPull ? t('dock.pull') : t('dock.fetch')}
+          >
+            <svg width={14} height={14} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={(pulling || fetching) ? 'gs-dirty-dot' : undefined} style={{ display: needsPull ? undefined : 'none' }}>
+              <path d="M7 1.8v7.2M4.3 6.4 7 9.2l2.7-2.8M2.5 11.8h9" />
+            </svg>
+            <svg width={14} height={14} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={(pulling || fetching) ? 'gs-dirty-dot' : undefined} style={{ display: needsPull ? 'none' : undefined }}>
+              <path d="M12 7A5 5 0 1 1 7 2c1.8 0 3.4.9 4.3 2.3M11.5 1.5v3h-3" />
+            </svg>
+          </button>
+        )}
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={() => { props.openGit() }}
+            className="gs-btn"
+            style={iconButton}
+            title={t('popup.openFull')}
+            aria-label={t('popup.openFull')}
+          >
+            <svg width={14} height={14} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M2 5.2V2h3.2M8.8 2H12v3.2M12 8.8V12H8.8M5.2 12H2V8.8" />
+            </svg>
           </button>
         )}
       </div>
-
+      {toast !== null && (
+        <div role="status" className="gs-popup-enter" style={toastStyle}>
+          <span style={{ color: toast.tone === 'error' ? token.error : (toast.tone === 'ok' ? token.success : token.labelPrimary) }}>{toast.text}</span>
+        </div>
+      )}
+      {pickerOpen && !collapsed && (
+        <div role="listbox" aria-label={t('panel.branches')} style={pickerStyle}>
+          <div style={sectionTitle}>{t('panel.branches')}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 200, overflow: 'auto' }}>
+            {loading && <SkeletonRows rows={3} />}
+            {!loading && list.map((b) => {
+              const a = b.ahead ?? 0
+              const d = b.behind ?? 0
+              const suffix = (b.upstream === undefined || b.upstream === '' || b.gone === true)
+                ? ` · ${(b.gone === true ? t('panel.upstreamGone') : t('panel.localOnly'))}`
+                : (a === 0 && d === 0 ? '' : ` · ↑${a} ↓${d}`)
+              return (
+                <button
+                  key={b.name}
+                  type="button"
+                  role="option"
+                  aria-selected={b.current}
+                  disabled={busy !== null}
+                  onClick={() => void switchTo(b.name)}
+                  className="gs-btn gs-row"
+                  style={b.current ? { ...pickerRow, ...pickerRowCurrent } : pickerRow}
+                  title={b.upstream ?? b.name}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {b.current ? '✓ ' : ''}{b.name}{suffix}
+                  </span>
+                </button>
+              )
+            })}
+            {!loading && list.length === 0 && <div style={emptyStyle}>{t('panel.noBranches')}</div>}
+          </div>
+        </div>
+      )}
       <div className={`gs-expand${collapsed ? ' gs-collapsed' : ''}`} aria-hidden={collapsed}>
         <div>
           <div style={{ overflow: 'auto', padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: 10, height: dockHeight, minHeight: 0 }}>
           {(localError ?? error) !== null && <div style={{ color: token.error, fontSize: 12 }}>{localError ?? error}</div>}
           {navError !== null && <div style={{ color: token.error, fontSize: 12 }}>{t('popup.navFailed')}: {navError}</div>}
-
-          <section>
-            <div style={sectionTitle}>{t('panel.branches')}</div>
-            {loading && <SkeletonRows rows={1} height={30} />}
-            {!loading && (
-              <select
-                value={currentName}
-                disabled={busy !== null || list.length === 0}
-                onChange={(e) => { void switchTo(e.target.value) }}
-                className="gs-btn"
-                style={selectStyle}
-                title={t('panel.branches')}
-                aria-label={t('panel.branches')}
-              >
-                {list.map((b) => {
-                  const a = b.ahead ?? 0
-                  const d = b.behind ?? 0
-                  const suffix = (b.upstream === undefined || b.upstream === '')
-                    ? ' · local'
-                    : (a === 0 && d === 0 ? '' : ` · ↑${a} ↓${d}`)
-                  return (
-                    <option key={b.name} value={b.name}>
-                      {b.current ? '✓ ' : ''}{b.name}{suffix}
-                    </option>
-                  )
-                })}
-              </select>
-            )}
-            {!loading && list.length === 0 && <div style={emptyStyle}>{t('panel.noBranches')}</div>}
-          </section>
 
           <section>
             <div style={sectionTitle}>{t('popup.recentCommits')}</div>
@@ -317,7 +483,15 @@ export function GitFooterAction(props: GitFooterActionProps) {
 }
 
 const sectionTitle: Record<string, string | number> = { fontWeight: 700, fontSize: 12, marginBottom: 6 }
-const selectStyle: Record<string, string | number> = { width: '100%', boxSizing: 'border-box', padding: '6px 8px', background: 'var(--dsw-specific-input-major, #131518)', color: 'var(--dsw-alias-label-primary, #e8eaed)', border: `1px solid ${token.border}`, borderRadius: 6, fontSize: 12 }
+const branchButton: Record<string, string | number> = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', cursor: 'pointer', background: 'transparent', color: 'inherit', border: `1px solid ${token.border}`, borderRadius: 6, fontSize: 12, fontWeight: 700, maxWidth: '45%', minWidth: 0 }
+const pickerStyle: Record<string, string | number> = { position: 'absolute', top: 42, left: 8, right: 8, zIndex: 5, background: 'var(--dsw-specific-input-major, #131518)', border: `1px solid ${token.border}`, borderRadius: 8, boxShadow: 'var(--dsw-shadow-lv3, 0 12px 40px rgba(0,0,0,0.55))', padding: 8 }
+const pickerRow: Record<string, string | number> = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '5px 6px', cursor: 'pointer', background: 'transparent', color: 'inherit', border: '1px solid transparent', borderRadius: 6, textAlign: 'left', fontSize: 13, width: '100%', boxSizing: 'border-box' }
+const pickerRowCurrent: Record<string, string | number> = { borderColor: token.brand, fontWeight: 700, backgroundColor: token.activeBg }
+const PULL_ORANGE = '#e8833c'
+const toastStyle: Record<string, string | number> = { position: 'absolute', top: 40, left: 8, right: 8, zIndex: 6, textAlign: 'center', fontSize: 12, padding: '6px 8px', background: 'var(--dsw-specific-input-major, #131518)', color: 'var(--dsw-alias-label-primary, #e8eaed)', border: `1px solid ${token.border}`, borderRadius: 8, boxShadow: 'var(--dsw-shadow-lv3, 0 12px 40px rgba(0,0,0,0.55))', pointerEvents: 'none' }
 const emptyStyle: Record<string, string | number> = { opacity: 0.6, fontSize: 12, padding: 6 }
 const commitButton: Record<string, string | number> = { display: 'flex', gap: 6, alignItems: 'baseline', width: '100%', background: 'transparent', color: 'inherit', border: 0, cursor: 'pointer', textAlign: 'left', padding: 0, fontSize: 13, borderRadius: 4 }
-const linkButton: Record<string, string | number> = { background: 'transparent', color: 'inherit', border: 0, cursor: 'pointer', fontSize: 12, opacity: 0.8 }
+const iconButton: Record<string, string | number> = { background: 'transparent', color: 'inherit', border: 0, cursor: 'pointer', padding: 4, borderRadius: 6, display: 'inline-flex', alignItems: 'center', opacity: 0.8 }
+const chevronButton: Record<string, string | number> = { background: 'transparent', color: 'inherit', border: 0, cursor: 'pointer', fontSize: 12, padding: 2, lineHeight: 1, borderRadius: 4 }
+const slimDock: Record<string, string | number> = { width: '100%', minWidth: 0, display: 'flex', alignItems: 'center', padding: '8px 10px', color: 'var(--dsw-alias-label-primary, #e8eaed)', fontSize: 12, opacity: 0.75 }
+const slimText: Record<string, string | number> = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }

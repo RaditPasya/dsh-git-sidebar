@@ -32,7 +32,11 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => {
     try {
       return ctx.locale.register(PANEL_NS, { zh: sidebarZh, en: sidebarEn })
-    } catch {
+    } catch (error: unknown) {
+      try {
+        console.warn(`[dsh-web-git-sidebar] slot registration failed: ${error instanceof Error ? error.message : String(error)}`)
+      } catch {
+      }
       return () => {}
     }
   }, 'dsh-web-git-sidebar: panel dictionaries')
@@ -62,7 +66,11 @@ export function apply(ctx: ClientContext): void {
       return ctx.slots.register(
         { name: 'main', key: PANEL_ID, locale: PANEL_NS },
         GitPanel)
-    } catch {
+    } catch (error: unknown) {
+      try {
+        console.warn(`[dsh-web-git-sidebar] slot registration failed: ${error instanceof Error ? error.message : String(error)}`)
+      } catch {
+      }
       return () => {}
     }
   })
@@ -78,7 +86,11 @@ export function apply(ctx: ClientContext): void {
           locale: PANEL_NS,
         },
         GitPanelIcon)
-    } catch {
+    } catch (error: unknown) {
+      try {
+        console.warn(`[dsh-web-git-sidebar] slot registration failed: ${error instanceof Error ? error.message : String(error)}`)
+      } catch {
+      }
       return () => {}
     }
   })
@@ -97,7 +109,11 @@ export function apply(ctx: ClientContext): void {
           }),
         },
         GitFooterAction)
-    } catch {
+    } catch (error: unknown) {
+      try {
+        console.warn(`[dsh-web-git-sidebar] slot registration failed: ${error instanceof Error ? error.message : String(error)}`)
+      } catch {
+      }
       return () => {}
     }
   })

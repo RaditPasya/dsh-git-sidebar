@@ -8,8 +8,6 @@ export const sharedGitApi = new GitApi()
 
 export const FOCUS_REFRESH_MIN_MS = 5_000
 
-export const POPUP_COMMIT_LIMIT = 30
-
 export const token = {
   labelPrimary: 'var(--dsw-alias-label-primary, #e8eaed)',
   labelSecondary: 'var(--dsw-alias-label-secondary, #9aa0a6)',
@@ -40,7 +38,6 @@ export function ensureSidebarStyles(): void {
   tag.dataset.plugin = 'dsh-web-git-sidebar'
   tag.textContent = `
 .gs-popup-enter { animation: gs-rise 180ms cubic-bezier(0.2, 0, 0.2, 1) both; }
-.gs-popup-exit { animation: gs-sink 150ms ease-in both; }
 .gs-row-enter { animation: gs-fade-slide 240ms cubic-bezier(0.2, 0, 0.2, 1) both; }
 .gs-flash { animation: gs-flash 900ms ease-out; }
 .gs-expand { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 180ms ease-out, opacity 180ms ease-out; opacity: 1; }
@@ -54,6 +51,12 @@ export function ensureSidebarStyles(): void {
 .gs-btn:disabled { opacity: 0.55; cursor: default; }
 .gs-btn:focus-visible { outline: 2px solid ${token.brand}; outline-offset: 1px; }
 .gs-dirty-dot { animation: gs-pulse 2.4s ease-in-out infinite; }
+.gs-dock { container-type: inline-size; }
+.gs-branch-light { display: none; }
+@container (max-width: 247px) {
+  .gs-branch-name { display: none; }
+  .gs-branch-light { display: inline; }
+}
 .gs-skeleton {
   border-radius: 6px;
   background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.12) 37%, rgba(255,255,255,0.05) 63%);
@@ -68,10 +71,6 @@ export function ensureSidebarStyles(): void {
   from { opacity: 0; transform: translateY(10px) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
-@keyframes gs-sink {
-  from { opacity: 1; transform: translateY(0) scale(1); }
-  to { opacity: 0; transform: translateY(8px) scale(0.99); }
-}
 @keyframes gs-fade-slide {
   from { opacity: 0; transform: translateX(-4px); }
   to { opacity: 1; transform: translateX(0); }
@@ -85,7 +84,7 @@ export function ensureSidebarStyles(): void {
   50% { opacity: 0.45; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .gs-popup-enter, .gs-popup-exit, .gs-row-enter, .gs-flash, .gs-dirty-dot, .gs-skeleton { animation: none; }
+  .gs-popup-enter, .gs-row-enter, .gs-flash, .gs-dirty-dot, .gs-skeleton { animation: none; }
   .gs-expand { transition: none; }
   .gs-row, .gs-btn { transition: none; }
 }`
@@ -108,11 +107,12 @@ export function useWorkspaceRefs(props: unknown): WorkspaceRef[] {
     })
     : []
   const list = (items ?? []) as Array<Record<string, unknown>>
+  const fingerprint = list.map((w) => [w['workspaceId'], w['id'], w['path'], w['name']].join('|')).join('\n')
   const [refs, setRefs] = useState<WorkspaceRef[]>(() => toRefs(list))
   useEffect(() => {
     setRefs(toRefs(list))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(list.map((w) => [w['workspaceId'], w['id'], w['path'], w['name']]))])
+  }, [fingerprint])
   return refs
 }
 
@@ -170,10 +170,10 @@ export interface GitSnapshot {
   graph: GraphView | null
   error: string | null
   loading: boolean
-  refresh: (workspacePath: string) => Promise<void>
+  refresh: (workspacePath: string) => Promise<SnapshotCacheEntry | null>
 }
 
-interface SnapshotCacheEntry {
+export interface SnapshotCacheEntry {
   at: number
   status: RepoStatus | null
   branches: BranchesView | null
@@ -181,12 +181,18 @@ interface SnapshotCacheEntry {
 }
 
 const snapshotCache = new Map<string, SnapshotCacheEntry>()
-const snapshotInflight = new Map<string, Promise<SnapshotCacheEntry>>()
+const snapshotInflight = new Map<string, Promise<SnapshotCacheEntry | null>>()
+const snapshotEpoch = new Map<string, number>()
+const focusThrottle = new Map<string, number>()
 
 const SNAPSHOT_TTL_MS = 10_000
 
 function cacheKey(path: string, commitLimit: number): string {
   return `${path}::${commitLimit}`
+}
+
+function epochOf(path: string): number {
+  return snapshotEpoch.get(path) ?? 0
 }
 
 function readCache(path: string, commitLimit: number): SnapshotCacheEntry | null {
@@ -201,20 +207,33 @@ function invalidateCache(path: string): void {
   for (const key of [...snapshotCache.keys()]) {
     if (key.startsWith(prefix)) snapshotCache.delete(key)
   }
+  snapshotEpoch.set(path, epochOf(path) + 1)
 }
 
-async function loadSnapshot(path: string, commitLimit: number): Promise<SnapshotCacheEntry> {
+async function loadSnapshot(path: string, commitLimit: number, force: boolean): Promise<SnapshotCacheEntry | null> {
   const key = cacheKey(path, commitLimit)
-  const running = snapshotInflight.get(key)
-  if (running !== undefined) return running
-  const flight = (async (): Promise<SnapshotCacheEntry> => {
+  if (!force) {
+    const warm = readCache(path, commitLimit)
+    if (warm !== null) return warm
+    const running = snapshotInflight.get(key)
+    if (running !== undefined) return running
+  }
+  const epoch = epochOf(path)
+  const flight = (async (): Promise<SnapshotCacheEntry | null> => {
     const res = await sharedGitApi.panel(path, commitLimit)
-    const view = res.ok ? res.value : null
+    if (!res.ok) return null
+    if (epochOf(path) !== epoch) return null
+    const view = res.value
+    if (view === null) {
+      const entry: SnapshotCacheEntry = { at: Date.now(), status: null, branches: null, graph: null }
+      snapshotCache.set(key, entry)
+      return entry
+    }
     const entry: SnapshotCacheEntry = {
       at: Date.now(),
-      status: view?.status ?? null,
-      branches: view?.branches ?? null,
-      graph: view?.graph ?? null,
+      status: view.status,
+      branches: view.branches,
+      graph: view.graph,
     }
     snapshotCache.set(key, entry)
     return entry
@@ -237,23 +256,31 @@ export function useGitSnapshot(
   const [graph, setGraph] = useState<GraphView | null>(() => readCache(path, commitLimit)?.graph ?? null)
   const [error, setError] = useState<string | null>(null)
   const seq = useRef(0)
-  const lastFocus = useRef(0)
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
 
   const applyEntry = useCallback((entry: SnapshotCacheEntry) => {
     setStatus(entry.status)
     setBranches(entry.branches)
     setGraph(entry.graph)
-    setError(entry.status === null ? t('panel.notARepo') : null)
-  }, [t])
+    setError(entry.status === null ? tRef.current('panel.notARepo') : null)
+  }, [])
 
-  const refresh = useCallback(async (workspacePath: string) => {
-    if (workspacePath === '') return
+  const refresh = useCallback(async (workspacePath: string): Promise<SnapshotCacheEntry | null> => {
+    if (workspacePath === '') return null
     const current = seq.current + 1
     seq.current = current
     setError(null)
-    const entry = await loadSnapshot(workspacePath, commitLimit)
-    if (seq.current !== current) return
+    const entry = await loadSnapshot(workspacePath, commitLimit, true)
+    if (seq.current !== current) return entry
+    if (entry === null) {
+      setError(tRef.current('panel.requestFailed'))
+      return null
+    }
     applyEntry(entry)
+    return entry
   }, [commitLimit, applyEntry])
 
   useEffect(() => {
@@ -266,18 +293,22 @@ export function useGitSnapshot(
       setStatus(warm.status)
       setBranches(warm.branches)
       setGraph(warm.graph)
-      setError(warm.status === null ? t('panel.notARepo') : null)
+      setError(warm.status === null ? tRef.current('panel.notARepo') : null)
     } else {
       setStatus(undefined)
       setBranches(null)
       setGraph(null)
     }
-    void loadSnapshot(path, commitLimit).then((entry) => {
+    void loadSnapshot(path, commitLimit, false).then((entry) => {
       if (!live || seq.current !== current) return
+      if (entry === null) {
+        setError(tRef.current('panel.requestFailed'))
+        return
+      }
       applyEntry(entry)
     }).catch(() => {
       if (!live || seq.current !== current) return
-      setError(t('panel.notARepo'))
+      setError(tRef.current('panel.requestFailed'))
     })
     const unsubscribe = subscribeChanges(path, () => {
       invalidateCache(path)
@@ -285,8 +316,9 @@ export function useGitSnapshot(
     })
     const onFocus = (): void => {
       const now = Date.now()
-      if (now - lastFocus.current < FOCUS_REFRESH_MIN_MS) return
-      lastFocus.current = now
+      const last = focusThrottle.get(path) ?? 0
+      if (now - last < FOCUS_REFRESH_MIN_MS) return
+      focusThrottle.set(path, now)
       void refresh(path)
     }
     window.addEventListener('focus', onFocus)
@@ -295,7 +327,7 @@ export function useGitSnapshot(
       unsubscribe()
       window.removeEventListener('focus', onFocus)
     }
-  }, [path, commitLimit, refresh, applyEntry, t])
+  }, [path, commitLimit, refresh])
 
   return { status, branches, graph, error, loading: status === undefined, refresh }
 }
@@ -352,14 +384,15 @@ export function commitHoverTitle(subject: string, author: string, authorTime: nu
   return `${subject}\n${author} · ${formatDateTime(authorTime)}`
 }
 
-export function TrackingBadge({ upstream, ahead, behind, t }: {
+export function TrackingBadge({ upstream, ahead, behind, gone, t }: {
   upstream?: string
   ahead?: number
   behind?: number
+  gone?: boolean
   t: Translate<GitSidebarKey>
 }) {
-  if (upstream === undefined || upstream === '') {
-    return <span style={{ fontSize: 12, color: token.warn, whiteSpace: 'nowrap' }} title={t('panel.noUpstream')}>● {t('panel.localOnly')}</span>
+  if (upstream === undefined || upstream === '' || gone === true) {
+    return <span style={{ fontSize: 12, color: token.warn, whiteSpace: 'nowrap' }} title={gone === true ? t('panel.upstreamGone') : t('panel.noUpstream')}>● {gone === true ? t('panel.upstreamGone') : t('panel.localOnly')}</span>
   }
   const a = ahead ?? 0
   const b = behind ?? 0
@@ -370,26 +403,6 @@ export function TrackingBadge({ upstream, ahead, behind, t }: {
       {a > 0 && b > 0 && <span> </span>}
       {b > 0 && <span style={{ color: token.brand }}>↓{b}</span>}
       <span style={{ opacity: 0.7 }}> {upstream}</span>
-    </span>
-  )
-}
-
-export function TrackingDot({ upstream, ahead, behind }: {
-  upstream?: string
-  ahead?: number
-  behind?: number
-}) {
-  if (upstream === undefined || upstream === '') {
-    return <span style={{ fontSize: 11, color: token.warn }} title={upstream ?? ''}>●</span>
-  }
-  const a = ahead ?? 0
-  const b = behind ?? 0
-  if (a === 0 && b === 0) return <span style={{ fontSize: 11, color: token.success }}>✓</span>
-  return (
-    <span style={{ fontSize: 11, whiteSpace: 'nowrap' }} title={upstream}>
-      {a > 0 ? <span style={{ color: token.warn }}>↑{a}</span> : null}
-      {a > 0 && b > 0 ? ' ' : ''}
-      {b > 0 ? <span style={{ color: token.brand }}>↓{b}</span> : null}
     </span>
   )
 }

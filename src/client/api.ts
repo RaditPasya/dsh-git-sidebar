@@ -10,23 +10,41 @@ export type ApiResult<T> =
 
 const TRANSPORT_ERROR: GitError = { code: 'internal', message: 'git route unavailable' }
 
+const REQUEST_TIMEOUT_MS = 25_000
+
+function isErrorEnvelope(value: unknown): value is { ok: false; error: GitError } {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  if (record.ok !== false) return false
+  const error = record.error as Record<string, unknown> | undefined
+  return typeof error?.code === 'string' && typeof error?.message === 'string'
+}
+
 async function post<T>(path: string, payload: Record<string, unknown>): Promise<ApiResult<T>> {
   let response: Response
+  const controller = new AbortController()
+  const timeout = setTimeout(() => {
+    controller.abort(new Error('git request timed out'))
+  }, REQUEST_TIMEOUT_MS)
   try {
     response = await fetch(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     })
   } catch {
     return { ok: false, error: TRANSPORT_ERROR }
+  } finally {
+    clearTimeout(timeout)
   }
   try {
     const envelope = await response.json() as unknown
     if (typeof envelope !== 'object' || envelope === null) return { ok: false, error: TRANSPORT_ERROR }
     const record = envelope as Record<string, unknown>
     if (record.ok === true) return { ok: true, value: record.value as T }
-    return { ok: false, error: (record.error as GitError | undefined) ?? TRANSPORT_ERROR }
+    if (isErrorEnvelope(envelope)) return { ok: false, error: envelope.error }
+    return { ok: false, error: TRANSPORT_ERROR }
   } catch {
     return { ok: false, error: TRANSPORT_ERROR }
   }
@@ -47,6 +65,14 @@ export class GitApi {
 
   createBranch(path: string, name: string): Promise<ApiResult<{ branch: string }>> {
     return post('git-sidebar/create-branch', { path, name })
+  }
+
+  pull(path: string): Promise<ApiResult<{ output: string }>> {
+    return post('git-sidebar/pull', { path })
+  }
+
+  fetch(path: string): Promise<ApiResult<{ output: string }>> {
+    return post('git-sidebar/fetch', { path })
   }
 
   graph(path: string, limit?: number): Promise<ApiResult<GraphView | null>> {
