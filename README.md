@@ -67,7 +67,12 @@ src/
     └── sidebar/     icon · panel · footer dock · shared kit
 ```
 
-![Quick tour](docs/tour.gif)
+<table>
+  <tr>
+    <td><img src="docs/tour1.gif" alt="Quick tour part 1" width="100%" /></td>
+    <td><img src="docs/tour2.gif" alt="Quick tour part 2" width="100%" /></td>
+  </tr>
+</table>
 
 ## License
 
