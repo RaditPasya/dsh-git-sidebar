@@ -92,6 +92,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node scripts/build.mjs && node scripts/test.mjs",
     "prepare": "node scripts/build.mjs"
   },
   "repository": {
