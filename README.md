@@ -28,11 +28,11 @@ Branches, graph, previews, and push-state — one click from the left rail. No t
 | **Commit graph** | Topo-order lanes in living color. Click any row to expand it. |
 | **Commit preview** | Files (`A/M/D`), `+ins −del`, message body, author, timestamp. Hover any row for the gist. |
 | **Who's who** | Every author gets their own dot color — scan a hundred commits at a glance. |
-| **Footer companion** | A tiny branch pill above Settings that *follows your open session* and hides on non-git workspaces. Click it for a floating mini-panel. |
+| **Footer dock** | An always-on branch dropdown + recent commits docked above Settings. *Follows your open session*, hides on non-git workspaces. Click the header to collapse, drag the top edge to resize — it remembers. |
 | ⚡ **Fast** | Status + branches + graph in **one** batched host call, cached, skeleton placeholders — no empty flashes. |
 
-<!-- TODO: replace with a real screenshot of the footer popup (400px wide PNG) -->
-![Footer popup over the sidebar](docs/popup.png)
+<!-- TODO: replace with a real screenshot of the footer dock (400px wide PNG) -->
+![Footer dock in the sidebar](docs/popup.png)
 
 ## Install
 
@@ -61,10 +61,10 @@ node scripts/build.mjs   # lib/index.js (host) + lib/client.js (browser)
 ```
 src/
 ├── core/        git vocabulary: commands, parsers, wire types
-├── host/        workspace-gated service + /git-fork/* routes + SSE
+├── host/        workspace-gated service + /git-sidebar/* routes + SSE
 └── client/
     ├── api.ts       typed fetch client
-    └── sidebar/     icon · panel · popup · footer · shared kit
+    └── sidebar/     icon · panel · footer dock · shared kit
 ```
 
 ![Quick tour](docs/tour.gif)
