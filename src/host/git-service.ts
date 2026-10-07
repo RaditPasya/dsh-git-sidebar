@@ -188,19 +188,25 @@ export class GitService {
     const root = await this.repoRoot(gated.canonical, signal)
     if (root === null) return null
     const read = { signal, deadlineMs: READ_DEADLINE_MS }
-    const [identity, porcelain, markers, refs, logResult] = await Promise.all([
+    const [identity, porcelain, markers, refs] = await Promise.all([
       this.runner.run(identityArgv(), root, read),
       this.runner.run(statusPorcelainArgv(), root, read),
       this.runner.run(operationMarkersArgv(), root, read),
       this.runner.run(forEachRefArgv(), root, read),
-      // Over-fetch by one so the caller can tell whether more history exists.
-      this.runner.run(graphLogArgv(limit + 1), root, read),
     ])
     const light = this.buildLight(
       root,
       requireCompleted(identity, 'git rev-parse'),
       requireCompleted(porcelain, 'git status'),
       await this.operationFromMarkers(root, requireCompleted(markers, 'git rev-parse --git-path'), signal),
+    )
+    // Scope history to the current branch so unrelated refs (stale
+    // cherry-picks, other remotes) don't fan out the lane graph.
+    // Detached HEAD falls back to all refs.
+    const logResult = await this.runner.run(
+      graphLogArgv(limit + 1, light.branch === '' ? undefined : light.branch),
+      root,
+      read,
     )
     const commits = parseGraph(requireCompleted(logResult, 'git log').stdout)
     const hasMore = commits.length > limit

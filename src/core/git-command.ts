@@ -74,8 +74,8 @@ export const pullArgv = (): string[] => ['pull', '--ff-only']
 
 export const fetchArgv = (remote: string, branch: string): string[] => ['fetch', '--quiet', '--', remote, branch]
 
-export const graphLogArgv = (limit: number): string[] => [
-  'log', '--branches', '--tags', '--remotes', '--topo-order', '--parents',
+export const graphLogArgv = (limit: number, ref?: string): string[] => [
+  'log', ...(ref !== undefined && ref !== '' ? [ref] : ['--branches', '--tags', '--remotes']), '--topo-order', '--parents',
   '--format=%H%x00%P%x00%an%x00%at%x00%D%x00%s%x1e',
   '--max-count', String(Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 200))),
 ]
