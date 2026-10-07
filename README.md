@@ -11,14 +11,13 @@ Branches, graph, previews, and push-state — one click from the left rail. No t
 [![DSH](https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square)](https://github.com/RaditPasya/dsh-web-git-sidebar)
 [![Platform](https://img.shields.io/badge/platform-web-333?style=flat-square)](https://github.com/RaditPasya/dsh-web-git-sidebar)
 
-[Features](#what-you-get) · [Install](#install) · [Tour](#tour) · [Dev](#dev-loop)
+[Features](#what-you-get) · [Tour](#tour) · [Install](#install) · [Dev](#dev-loop)
 
 </div>
 
 ---
 
-<!-- TODO: replace with a real screenshot of the full panel (1280px wide PNG) -->
-![Full Git panel with branches and graph](docs/panel.png)
+![Full Git panel with branches and commit graph](docs/panel.png)
 
 ## What you get
 
@@ -28,10 +27,22 @@ Branches, graph, previews, and push-state — one click from the left rail. No t
 | **Commit graph** | Topo-order lanes in living color. Click any row to expand it. |
 | **Commit preview** | Files (`A/M/D`), `+ins −del`, message body, author, timestamp. Hover any row for the gist. |
 | **Who's who** | Every author gets their own dot color — scan a hundred commits at a glance. |
-| **Footer dock** | An always-on branch dropdown + recent commits docked above Settings. *Follows your open session*, hides on non-git workspaces. Click the header to collapse, drag the top edge to resize — it remembers. |
+| **Footer dock** | An always-on branch dropdown + recent commits docked above Settings. *Follows your open session*, hides on non-git workspaces. Click the header to collapse, drag (or focus and use arrow keys on) the top edge to resize — it remembers. |
+| **Pull / fetch** | One button. It fetches when you are in sync and fast-forwards when you are behind, and tells you what happened. |
 | ⚡ **Fast** | Status + branches + graph in **one** batched host call, cached, skeleton placeholders — no empty flashes. |
 
-<!-- TODO: replace with a real screenshot of the footer dock (400px wide PNG) -->
+Every host git command runs under a deadline, so a stalled repository degrades into
+an error instead of wedging the panel.
+
+## Tour
+
+<table>
+  <tr>
+    <td><img src="docs/tour1.gif" alt="Quick tour part 1" width="100%" /></td>
+    <td><img src="docs/tour2.gif" alt="Quick tour part 2" width="100%" /></td>
+  </tr>
+</table>
+
 ![Footer dock in the sidebar](docs/popup.png)
 
 ## Install
@@ -52,11 +63,31 @@ Restart the web UI once (new host routes), refresh — the **Git icon** appears 
 
 ```sh
 pnpm install
-node scripts/build.mjs   # lib/index.js (host) + lib/client.js (browser)
+node scripts/build.mjs            # lib/index.js (host) + lib/client.js (browser)
+MINIFY=0 node scripts/build.mjs   # dev variant: readable output, intact stack traces
 ```
 
-`link:` installs pick up rebuilds live — just refresh the page. No test suite yet;
-`tsc --noEmit` is the gate (`pnpm run typecheck`).
+Builds are minified by default (the client bundle is ~45% smaller raw, ~22% smaller
+gzipped). Use `MINIFY=0` when you want to read the emitted JS or get usable host
+stack traces.
+
+`link:` installs pick up rebuilds live — just refresh the page. Host-side changes
+(anything under `src/host/` or `src/index.ts`) need a DSH restart, because the host
+bundle is loaded once at startup.
+
+Three gates, all run in CI on every push and again before publishing:
+
+```sh
+pnpm run typecheck   # tsc --noEmit, strict, with noUnusedLocals
+pnpm test            # builds lib/, then runs every suite under test/
+```
+
+`pnpm test` bundles each `test/*.test.ts` with esbuild into a temp directory and
+hands it to `node --test` — the sources use TypeScript parameter properties, which
+Node's native type stripping rejects. The suites cover the git command deadline,
+flight eviction, the poll backoff policy and the mutation guards, plus smoke tests
+that load the **built** bundles, so a minification or bundling regression fails
+`pnpm test` rather than the browser.
 
 ```
 src/
@@ -65,14 +96,10 @@ src/
 └── client/
     ├── api.ts       typed fetch client
     └── sidebar/     icon · panel · footer dock · shared kit
-```
 
-<table>
-  <tr>
-    <td><img src="docs/tour1.gif" alt="Quick tour part 1" width="100%" /></td>
-    <td><img src="docs/tour2.gif" alt="Quick tour part 2" width="100%" /></td>
-  </tr>
-</table>
+test/            bundled by scripts/test.mjs and run with node --test
+scripts/         build.mjs (esbuild) · test.mjs (bundle + run suites)
+```
 
 ## License
 
