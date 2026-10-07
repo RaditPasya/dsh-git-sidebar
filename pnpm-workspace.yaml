@@ -1,7 +1,18 @@
+# pnpm build-script allowlist.
+#
+# Every dependency that ships an install script MUST be listed here with an
+# explicit boolean. Leaving a placeholder value (or omitting the key) makes
+# `pnpm install --frozen-lockfile` exit non-zero, which aborts the publish
+# workflow and every local `pnpm run <script>`.
+#
+# esbuild is enabled because `scripts/build.mjs` (wired to `build` and
+# `prepare`) cannot run without it. The remaining entries are native or
+# transitive members of the DSH dev toolchain that this plugin never imports
+# or executes, so their install scripts stay off.
 allowBuilds:
-  '@deepseek-ai/dsh-subprocess-local': set this to true or false
-  '@google/genai': set this to true or false
-  esbuild: set this to true or false
-  koffi: set this to true or false
-  node-pty: set this to true or false
-  protobufjs: set this to true or false
+  esbuild: true
+  node-pty: false
+  koffi: false
+  protobufjs: false
+  '@google/genai': false
+  '@deepseek-ai/dsh-subprocess-local': false
