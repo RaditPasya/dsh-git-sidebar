@@ -15,6 +15,7 @@ export interface BranchRow {
   upstream?: string
   ahead?: number
   behind?: number
+  gone?: boolean
 }
 
 export interface CommitFile {
@@ -101,6 +102,10 @@ export type SwitchResult =
   | { ok: true; branch: string }
   | { ok: false; error: GitError }
 
+export type PullResult =
+  | { ok: true; output: string }
+  | { ok: false; error: GitError }
+
 export interface GraphCommit {
   oid: string
   parents: string[]
@@ -129,35 +134,45 @@ export function parseBranches(stdout: string): BranchRow[] {
   return rows
 }
 
-export function parseUpstreamTrack(upstream: string, track: string): Pick<BranchRow, 'upstream' | 'ahead' | 'behind'> {
+export function parseUpstreamTrack(upstream: string, track: string): Pick<BranchRow, 'upstream' | 'ahead' | 'behind' | 'gone'> {
   const cleanUpstream = (upstream ?? '').trim()
-  const out: Pick<BranchRow, 'upstream' | 'ahead' | 'behind'> = {}
+  const out: Pick<BranchRow, 'upstream' | 'ahead' | 'behind' | 'gone'> = {}
   if (cleanUpstream !== '') out.upstream = cleanUpstream
   const t = (track ?? '').trim()
+  if (t === '') {
+    if (cleanUpstream !== '') {
+      out.ahead = 0
+      out.behind = 0
+    }
+    return out
+  }
+  if (/\bgone\b/.test(t)) {
+    out.gone = true
+    return out
+  }
   const ahead = /ahead (\d+)/.exec(t)
   const behind = /behind (\d+)/.exec(t)
   if (ahead?.[1] !== undefined) out.ahead = Number(ahead[1])
-  else if (cleanUpstream !== '') out.ahead = 0
   if (behind?.[1] !== undefined) out.behind = Number(behind[1])
-  else if (cleanUpstream !== '') out.behind = 0
   return out
 }
 
 export function parseNameStatus(stdout: string): CommitFile[] {
   const files: CommitFile[] = []
   for (const line of stdout.split('\n')) {
+    if (files.length >= 200) break
     if (line === '') continue
     const tab = line.indexOf('\t')
     if (tab === -1) continue
     const status = line.slice(0, tab).trim()
     const rest = line.slice(tab + 1)
     if (status === '' || rest === '') continue
-    const parts = rest.split('\t')
-    const path = parts[parts.length - 1] ?? rest
+    const lastTab = rest.lastIndexOf('\t')
+    const path = (lastTab === -1 ? rest : rest.slice(lastTab + 1)).slice(0, 1024)
     if (path === '') continue
     files.push({ path, status: status[0] ?? status })
   }
-  return files.slice(0, 200)
+  return files
 }
 
 export function parseNumstat(stdout: string): { insertions: number; deletions: number; filesChanged: number } {
@@ -166,12 +181,16 @@ export function parseNumstat(stdout: string): { insertions: number; deletions: n
   let filesChanged = 0
   for (const line of stdout.split('\n')) {
     if (line === '') continue
-    const [added, removed] = line.split('\t')
-    if (added === undefined || removed === undefined) continue
+    const firstTab = line.indexOf('\t')
+    if (firstTab === -1) continue
+    const secondTab = line.indexOf('\t', firstTab + 1)
+    if (secondTab === -1) continue
+    const added = line.slice(0, firstTab)
+    const removed = line.slice(firstTab + 1, secondTab)
     if (added === '-' || removed === '-') continue
     const a = Number(added)
     const r = Number(removed)
-    if (!Number.isFinite(a) || !Number.isFinite(r)) continue
+    if (!Number.isInteger(a) || !Number.isInteger(r) || a < 0 || r < 0) continue
     insertions += a
     deletions += r
     filesChanged += 1
@@ -180,11 +199,15 @@ export function parseNumstat(stdout: string): { insertions: number; deletions: n
 }
 
 export function parseWorktreeBranches(stdout: string): string[] {
+  const seen = new Set<string>()
   const branches: string[] = []
   for (const line of stdout.split('\n')) {
     if (!line.startsWith('branch refs/heads/')) continue
     const name = line.slice('branch refs/heads/'.length).trim()
-    if (name !== '' && !branches.includes(name)) branches.push(name)
+    if (name !== '' && !seen.has(name)) {
+      seen.add(name)
+      branches.push(name)
+    }
   }
   return branches
 }
@@ -230,6 +253,7 @@ export function parsePorcelain(stdout: string): { dirtyFiles: number; untrackedF
     const xy = line.slice(0, 2)
     if (unmerged.has(xy)) conflicts += 1
     else if (xy.startsWith('??')) untrackedFiles += 1
+    else if (xy === '  ') continue
     else dirtyFiles += 1
   }
   return { dirtyFiles, untrackedFiles, conflicts }
@@ -245,8 +269,8 @@ export function parseGraph(stdout: string): GraphCommit[] {
     commits.push({
       oid,
       parents: parentsRaw === undefined || parentsRaw === '' ? [] : parentsRaw.split(' '),
-      subject: subject ?? '',
-      author: author ?? '',
+      subject: (subject ?? '').slice(0, 1000),
+      author: (author ?? '').slice(0, 200),
       authorTime: Number(authorTimeRaw ?? '0'),
       refs: parseDecoration(decoration ?? ''),
     })
@@ -309,15 +333,19 @@ export function computeLanes(rows: readonly GraphCommit[]): GraphRowLanes[] {
 }
 
 
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
 export function isRepoStatus(value: unknown): value is RepoStatus {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
   return typeof record.root === 'string'
     && typeof record.branch === 'string'
     && typeof record.head === 'string'
-    && typeof record.dirtyFiles === 'number'
-    && typeof record.untrackedFiles === 'number'
-    && typeof record.conflicts === 'number'
+    && isCount(record.dirtyFiles)
+    && isCount(record.untrackedFiles)
+    && isCount(record.conflicts)
     && typeof record.operationInProgress === 'boolean'
 }
 
@@ -326,8 +354,9 @@ export function isBranchRow(value: unknown): value is BranchRow {
   const record = value as Record<string, unknown>
   if (typeof record.name !== 'string' || typeof record.current !== 'boolean') return false
   if (record.upstream !== undefined && typeof record.upstream !== 'string') return false
-  if (record.ahead !== undefined && typeof record.ahead !== 'number') return false
-  if (record.behind !== undefined && typeof record.behind !== 'number') return false
+  if (record.ahead !== undefined && !isCount(record.ahead)) return false
+  if (record.behind !== undefined && !isCount(record.behind)) return false
+  if (record.gone !== undefined && typeof record.gone !== 'boolean') return false
   return true
 }
 
@@ -343,13 +372,14 @@ export function isCommitDetail(value: unknown): value is CommitDetail {
   return typeof record.oid === 'string'
     && Array.isArray(record.parents) && record.parents.every(parent => typeof parent === 'string')
     && typeof record.subject === 'string'
+    && (record.body === undefined || typeof record.body === 'string')
     && typeof record.author === 'string'
-    && typeof record.authorTime === 'number'
+    && typeof record.authorTime === 'number' && Number.isFinite(record.authorTime)
     && Array.isArray(record.refs) && record.refs.every(ref => typeof ref === 'string')
     && Array.isArray(record.files) && record.files.every(isCommitFile)
-    && typeof record.filesChanged === 'number'
-    && typeof record.insertions === 'number'
-    && typeof record.deletions === 'number'
+    && isCount(record.filesChanged)
+    && isCount(record.insertions)
+    && isCount(record.deletions)
 }
 
 export function isBranchesView(value: unknown): value is BranchesView {
@@ -358,9 +388,9 @@ export function isBranchesView(value: unknown): value is BranchesView {
   return typeof record.root === 'string'
     && typeof record.branch === 'string'
     && Array.isArray(record.branches) && record.branches.every(isBranchRow)
-    && typeof record.dirtyFiles === 'number'
-    && typeof record.untrackedFiles === 'number'
-    && typeof record.conflicts === 'number'
+    && isCount(record.dirtyFiles)
+    && isCount(record.untrackedFiles)
+    && isCount(record.conflicts)
     && typeof record.operationInProgress === 'boolean'
 }
 
@@ -371,7 +401,7 @@ export function isGraphCommit(value: unknown): value is GraphCommit {
     && Array.isArray(record.parents) && record.parents.every(parent => typeof parent === 'string')
     && typeof record.subject === 'string'
     && typeof record.author === 'string'
-    && typeof record.authorTime === 'number'
+    && typeof record.authorTime === 'number' && Number.isFinite(record.authorTime)
     && Array.isArray(record.refs) && record.refs.every(ref => typeof ref === 'string')
 }
 
@@ -452,6 +482,11 @@ export function isGitError(value: unknown): value is GitError {
     && (!Array.isArray(record.paths) || !record.paths.every(path => typeof path === 'string'))) {
     return false
   }
-  if (record.moreFiles !== undefined && typeof record.moreFiles !== 'number') return false
+  if (record.moreFiles !== undefined && !isCount(record.moreFiles)) return false
   return true
+}
+
+export function isResultPayload(value: unknown): value is Record<string, string> {
+  if (typeof value !== 'object' || value === null) return false
+  return Object.values(value as Record<string, unknown>).every(entry => typeof entry === 'string')
 }

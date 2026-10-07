@@ -16,21 +16,21 @@ export const forEachRefArgv = (): string[] => [
 
 export const commitFilesArgv = (oid: string): string[] => [
   'show', '--name-status', '--no-renames', '--format=',
-  oid,
+  oid, '--',
 ]
 
 export const commitNumstatArgv = (oid: string): string[] => [
   'show', '--numstat', '--format=',
-  oid,
+  oid, '--',
 ]
 
 export const commitHeaderArgv = (oid: string): string[] => [
   'show', '-s',
   '--format=%H%x00%P%x00%an%x00%at%x00%D%x00%s%x00%b%x1e',
-  oid,
+  oid, '--',
 ]
 
-export const verifyCommitArgv = (oid: string): string[] => ['rev-parse', '--verify', '--quiet', `${oid}^{commit}`]
+export const verifyCommitArgv = (oid: string): string[] => ['rev-parse', '--verify', '--quiet', `${oid}^{commit}`, '--']
 
 export const statusPorcelainArgv = (): string[] => ['status', '--porcelain']
 
@@ -45,9 +45,9 @@ export const worktreeAddArgv = (path: string, branch: string, baseRef: string): 
 export const worktreeRemoveArgv = (path: string, force: boolean): string[] =>
   force ? ['worktree', 'remove', '--force', path] : ['worktree', 'remove', path]
 
-export const branchDeleteForceArgv = (name: string): string[] => ['branch', '-D', name]
+export const branchDeleteForceArgv = (name: string): string[] => ['branch', '-D', '--', name]
 
-export const verifyRevArgv = (rev: string): string[] => ['rev-parse', '--verify', '--quiet', rev]
+export const verifyRevArgv = (rev: string): string[] => ['rev-parse', '--verify', '--quiet', rev, '--']
 
 export const WORKTREE_BRANCH_PREFIX = 'wt/'
 
@@ -56,24 +56,28 @@ export function sanitizeWorktreeName(raw: string): string | null {
     .replace(/[^a-z0-9._-]+/g, '-')
     .replace(/-{2,}/g, '-')
     .replace(/^[-.]+/, '')
-    .replace(/[-.]+$/, '')
     .slice(0, 64)
+    .replace(/[-.]+$/, '')
   if (cleaned === '' || cleaned === '.' || cleaned === '..') return null
   return cleaned
 }
 
-export const verifyRefArgv = (branch: string): string[] => ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]
+export const verifyRefArgv = (branch: string): string[] => ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`, '--']
 
 export const checkRefFormatArgv = (name: string): string[] => ['check-ref-format', '--branch', name]
 
 export const switchArgv = (branch: string): string[] => ['switch', '--no-guess', '--', branch]
 
-export const createBranchArgv = (name: string): string[] => ['switch', '--no-guess', '-c', name]
+export const createBranchArgv = (name: string): string[] => ['switch', '--no-guess', '-c', name, '--']
+
+export const pullArgv = (): string[] => ['pull', '--ff-only']
+
+export const fetchArgv = (remote: string, branch: string): string[] => ['fetch', '--quiet', '--', remote, branch]
 
 export const graphLogArgv = (limit: number): string[] => [
   'log', '--branches', '--tags', '--remotes', '--topo-order', '--parents',
   '--format=%H%x00%P%x00%an%x00%at%x00%D%x00%s%x1e',
-  '--max-count', String(limit),
+  '--max-count', String(Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 200))),
 ]
 
 export const OPERATION_MARKERS = [
@@ -114,6 +118,14 @@ const gitPathDecoder = new TextDecoder()
 
 const GIT_SIMPLE_ESCAPES: Record<string, number> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11 }
 
+function pushEncoded(bytes: number[], text: string): void {
+  const encoded = gitPathEncoder.encode(text)
+  for (let i = 0; i < encoded.length; i += 1) {
+    const byte = encoded[i]
+    if (byte !== undefined) bytes.push(byte)
+  }
+}
+
 function decodeGitQuoted(input: string): string {
   if (!input.includes('\\')) return input
   const bytes: number[] = []
@@ -121,19 +133,19 @@ function decodeGitQuoted(input: string): string {
   let index = 0
   let match: RegExpExecArray | null
   while ((match = pattern.exec(input)) !== null) {
-    bytes.push(...gitPathEncoder.encode(input.slice(index, match.index)))
+    pushEncoded(bytes, input.slice(index, match.index))
     const octal = match[1]
     if (octal !== undefined) {
       bytes.push(Number.parseInt(octal, 8) & 0xff)
     } else {
       const escaped = match[2]!
       const control = GIT_SIMPLE_ESCAPES[escaped]
-      if (control === undefined) bytes.push(...gitPathEncoder.encode(escaped))
+      if (control === undefined) pushEncoded(bytes, escaped)
       else bytes.push(control)
     }
     index = match.index + match[0].length
   }
-  bytes.push(...gitPathEncoder.encode(input.slice(index)))
+  pushEncoded(bytes, input.slice(index))
   return gitPathDecoder.decode(new Uint8Array(bytes))
 }
 
@@ -141,23 +153,32 @@ export function extractBlockedPaths(
   stderr: string,
   header: RegExp,
 ): { paths: string[]; moreFiles: number } {
-  const start = stderr.indexOf('\n', stderr.search(header))
+  const found = stderr.search(header)
+  if (found < 0) return { paths: [], moreFiles: 0 }
+  const start = stderr.indexOf('\n', found)
   if (start === -1) return { paths: [], moreFiles: 0 }
   const paths: string[] = []
+  let moreFiles = 0
   for (const line of stderr.slice(start + 1).split('\n')) {
     const trimmed = line.trim()
     if (trimmed === '' || !line.startsWith('\t')) break
-    const quoted = /^"(.+)"$/.exec(trimmed)
-    const path = quoted === null
-      ? decodeGitQuoted(trimmed)
-      : decodeGitQuoted(quoted[1] ?? '')
-    paths.push(path)
+    if (paths.length < 2) {
+      const quoted = /^"(.+)"$/.exec(trimmed)
+      const path = quoted === null
+        ? decodeGitQuoted(trimmed)
+        : decodeGitQuoted(quoted[1] ?? '')
+      paths.push(path)
+    } else {
+      moreFiles += 1
+    }
   }
-  return { paths: paths.slice(0, 2), moreFiles: Math.max(0, paths.length - 2) }
+  return { paths, moreFiles }
 }
 
 export function classifySwitchFailure(stderr: string): GitError {
-  const head = stderr.trim().split('\n')[0] ?? stderr
+  const trimmed = stderr.trim()
+  const cut = trimmed.indexOf('\n')
+  const head = (cut < 0 ? trimmed : trimmed.slice(0, cut)).slice(0, 500)
   for (const pattern of OVERWRITE_PATTERNS) {
     if (pattern.header.test(stderr)) {
       const { paths, moreFiles } = extractBlockedPaths(stderr, pattern.header)
