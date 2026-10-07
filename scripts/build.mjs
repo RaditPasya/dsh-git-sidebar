@@ -6,10 +6,11 @@
  *   serves it at /plugins/<id>/client.js like the upstream plugin.
  */
 import { build } from 'esbuild'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 
-const PKG_ID = 'dsh-web-git-sidebar'
+const { name: PKG_ID } = JSON.parse(await readFile('package.json', 'utf8'))
 
+await rm('lib', { recursive: true, force: true })
 await mkdir('lib', { recursive: true })
 
 // ---- host (node) ----
@@ -42,14 +43,14 @@ await build({
     'react/jsx-runtime',
     '@deepseek-ai/*',
   ],
-  resolveExtensions: ['.tsx', '.ts', '.jsx', '.js', '.json', '.css'],
-  loader: { '.css': 'empty' },
+  resolveExtensions: ['.tsx', '.ts', '.jsx', '.js', '.json'],
   logLevel: 'info',
 })
 
 const bundle = await readFile('lib/__client_bundle.cjs', 'utf8')
-const wrapped = `window.__ModuleLoader__.load({\n\tid: ${JSON.stringify(PKG_ID)},\n\tfactory: (require) => {\n\t\tvar module = { exports: {} };\n\t\tvar exports = module.exports;\n${bundle}\n\t\treturn module.exports;\n\t}\n});\n//# sourceMappingURL=client.js.map\n`
+const wrapped = `window.__ModuleLoader__.load({\n\tid: ${JSON.stringify(PKG_ID)},\n\tfactory: (require) => {\n\t\tvar module = { exports: {} };\n\t\tvar exports = module.exports;\n${bundle}\n\t\treturn module.exports;\n\t}\n});\n`
 await writeFile('lib/client.js', wrapped, 'utf8')
+await rm('lib/__client_bundle.cjs', { force: true })
 
 // minimal types stub so the "types" export resolves; real d.ts comes from tsc in upstream.
 // We keep src as the source of truth (package exports ./src/*).
